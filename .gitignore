@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# 运行时产物（本地部署日志、混淆后的配置由程序维护）
+brm/logs/*.log
+build/
+dist/
+*.spec
+.DS_Store
+
+# 由 tools/build_launcher.py 生成的本地启动器（含本机绝对路径）
+Booster机器人管理器.app/
+启动 Booster 机器人管理器.command
+
+# Windows 便携版交叉构建产物
+.build-windows/
+dist-windows/
