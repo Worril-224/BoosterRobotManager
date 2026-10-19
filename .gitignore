@@ -18,6 +18,4 @@ dist/
 Booster机器人管理器.app/
 启动 Booster 机器人管理器.command
 
-# Windows 便携版交叉构建产物
-.build-windows/
-dist-windows/
+

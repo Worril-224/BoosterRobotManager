@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "_说明": "Booster Robot Manager 配置文件。password 字段为 Base64 混淆存储，不是加密；留空表示使用全局默认密码。",
+  "settings": {
+    "default_password": "",
+    "connect_timeout": 10,
+    "command_timeout": 600,
+    "remote_home_dir": "/home/booster/"
+  },
+  "robots": [
+    {
+      "name": "107",
+      "host": "192.168.1.107",
+      "port": 22,
+      "username": "booster",
+      "auth_type": "password",
+      "password": "",
+      "key_path": "",
+      "workspace_dir": "/home/booster/Workspace/"
+    }
+  ]
+}
