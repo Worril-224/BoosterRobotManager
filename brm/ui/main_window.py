@@ -966,6 +966,7 @@ class MainWindow(QMainWindow):
         self._busy = True
         self._apply_state()
         self.deploy_panel.set_progress(0, "准备部署…")
+        self.deploy_panel.reset_compile()
 
         password = self.store.resolve_password(robot) or ""
         worker = DeployWorker(
@@ -980,6 +981,7 @@ class MainWindow(QMainWindow):
         self._track(worker)
         worker.log.connect(self.log_line)
         worker.progress.connect(self._on_deploy_progress)
+        worker.compile_progress.connect(self.deploy_panel.set_compile_progress)
         worker.deploy_finished.connect(self._on_deploy_finished)
         worker.failed.connect(self._on_deploy_failed)
         worker.finished.connect(lambda w=worker: self._on_deploy_worker_finished(w))

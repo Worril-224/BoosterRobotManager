@@ -92,6 +92,29 @@ class DeployPanel(QWidget):
         progress_row.addWidget(self._progress_label)
         layout.addLayout(progress_row)
 
+        # 编译进度（上传完成后进入编译阶段时显示）
+        self._compile_box = QWidget()
+        compile_layout = QVBoxLayout(self._compile_box)
+        compile_layout.setContentsMargins(0, 0, 0, 0)
+        compile_layout.setSpacing(4)
+        compile_header = QHBoxLayout()
+        compile_title = QLabel("编译进度")
+        compile_title.setObjectName("MutedLabel")
+        self._compile_label = QLabel("等待编译")
+        self._compile_label.setObjectName("MutedLabel")
+        self._compile_label.setWordWrap(True)
+        compile_header.addWidget(compile_title)
+        compile_header.addStretch(1)
+        compile_header.addWidget(self._compile_label, 1)
+        self._compile_bar = QProgressBar()
+        self._compile_bar.setRange(0, 100)
+        self._compile_bar.setValue(0)
+        self._compile_bar.setTextVisible(False)
+        compile_layout.addLayout(compile_header)
+        compile_layout.addWidget(self._compile_bar)
+        self._compile_box.setVisible(False)
+        layout.addWidget(self._compile_box)
+
         self._deploy_button = QPushButton("② 上传并部署")
         self._deploy_button.setObjectName("PrimaryButton")
         self._deploy_button.clicked.connect(self._emit_deploy)
@@ -173,6 +196,27 @@ class DeployPanel(QWidget):
         self._progress.setValue(max(0, min(100, int(percent))))
         self._progress_label.setText(text or f"{int(percent)}%")
 
+    def reset_compile(self) -> None:
+        self._compile_box.setVisible(False)
+        self._compile_bar.setRange(0, 100)
+        self._compile_bar.setValue(0)
+        self._compile_label.setText("等待编译")
+        self._compile_label.setStyleSheet("color: #8b929c;")
+
+    def set_compile_progress(self, percent: int, text: str) -> None:
+        """更新编译进度；percent < 0 时显示不确定进度条。"""
+        self._compile_box.setVisible(True)
+        if percent < 0:
+            self._compile_bar.setRange(0, 0)
+        else:
+            self._compile_bar.setRange(0, 100)
+            self._compile_bar.setValue(max(0, min(100, int(percent))))
+        self._compile_label.setText(text or "编译中…")
+        failed = any(word in (text or "") for word in ("失败", "中断", "取消", "错误"))
+        self._compile_label.setStyleSheet(
+            "color: #ff8a8a;" if failed else "color: #8b929c;"
+        )
+
     def set_stage_text(self, text: str) -> None:
         self._progress_label.setText(text)
 
@@ -183,6 +227,7 @@ class DeployPanel(QWidget):
             self._project_label.setText(f"{project_dir}{suffix}")
         else:
             self._project_label.setText("尚未部署")
+        self.reset_compile()
         self._status = None
         self._render_status()
         self._update_buttons()

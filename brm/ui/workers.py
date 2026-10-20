@@ -180,6 +180,7 @@ class DeployWorker(BaseWorker):
     """上传 + 部署流水线。"""
 
     progress = Signal(int)
+    compile_progress = Signal(int, str)  # (百分比或 -1 表示不确定, 状态文字)
     deploy_finished = Signal(object)  # DeployResult
 
     def __init__(
@@ -217,6 +218,7 @@ class DeployWorker(BaseWorker):
                 deploy_log,
                 robot_name=self.robot_name,
                 progress=self.progress.emit,
+                compile_progress=self.compile_progress.emit,
                 cancel_event=self._cancel_event,
             )
             result = deployer.run(self.zip_path, self.workspace_dir)

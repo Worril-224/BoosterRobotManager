@@ -10,11 +10,13 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
 from .. import constants
+from .build_progress import BuildProgress
 from .errors import (
     BrmError,
     CommandTimeoutError,
@@ -68,6 +70,7 @@ class Deployer:
         *,
         robot_name: str,
         progress: Optional[Callable[[int], None]] = None,
+        compile_progress: Optional[Callable[[int, str], None]] = None,
         cancel_event: Optional[threading.Event] = None,
     ) -> None:
         self.session = session
@@ -75,6 +78,7 @@ class Deployer:
         self.log = log
         self.robot_name = robot_name
         self.progress = progress
+        self.compile_progress = compile_progress
         self.cancel_event = cancel_event or threading.Event()
 
     # ------------------------------------------------------------------
@@ -372,6 +376,27 @@ class Deployer:
         )
         self.log.raw("──────── 编译输出开始 ────────")
 
+        tracker = BuildProgress()
+        started_at = time.monotonic()
+        last_report = [0.0]
+
+        def report(percent: int, text: str) -> None:
+            if self.compile_progress is None:
+                return
+            try:
+                self.compile_progress(max(-1, min(100, int(percent))), text)
+            except Exception:
+                pass
+
+        def report_running(force: bool = False) -> None:
+            now = time.monotonic()
+            if not force and now - last_report[0] < 0.25:
+                return
+            last_report[0] = now
+            report(tracker.percent, tracker.summary_text(now - started_at))
+
+        report(-1, "编译开始…")
+
         def on_line(line: str) -> None:
             if self.cancel_event.is_set():
                 raise DeployCancelledError(
@@ -379,27 +404,38 @@ class Deployer:
                     hint="远端编译进程可能仍在运行，请稍后在机器人上确认。",
                 )
             self.log.raw(line)
+            tracker.feed(line)
+            report_running()
 
         try:
             result = self.session.exec_stream(
                 command, on_line, timeout=self._command_timeout()
             )
-        except CommandTimeoutError:
-            raise
-        except DeployCancelledError:
-            raise
-        except BrmError:
+        except (CommandTimeoutError, DeployCancelledError, BrmError) as exc:
+            elapsed = time.monotonic() - started_at
+            title = getattr(exc, "title", "编译中断")
+            report(-1, f"{title} · 用时 {elapsed:.1f} 秒")
             raise
         self.log.raw("──────── 编译输出结束 ────────")
         self.log.info(f"编译退出码：{result.exit_code}")
+        elapsed = time.monotonic() - started_at
 
         if result.exit_code != 0:
             tail = "\n".join((result.stdout or "").strip().splitlines()[-30:])
+            report(
+                -1,
+                f"编译失败（退出码 {result.exit_code}）· 用时 {elapsed:.1f} 秒"
+                f" · 输出 {tracker.lines} 行",
+            )
             raise CompileFailedError(
                 f"编译失败（退出码 {result.exit_code}）。",
                 hint="请根据上方编译输出定位错误后重新部署。",
                 detail=tail,
             )
+        report(
+            100,
+            f"编译完成 · 用时 {elapsed:.1f} 秒 · 输出 {tracker.lines} 行",
+        )
         self.log.info("编译成功")
         return build_script
 
