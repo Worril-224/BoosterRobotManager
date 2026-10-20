@@ -24,6 +24,7 @@ class DeployPanel(QWidget):
     """右侧部署 / 服务控制面板。"""
 
     choose_zip_requested = Signal()
+    choose_folder_requested = Signal()
     deploy_requested = Signal(str)
     start_requested = Signal()
     stop_requested = Signal()
@@ -37,6 +38,7 @@ class DeployPanel(QWidget):
         self._project_dir: str = ""
         self._connected = False
         self._busy = False
+        self._zipping = False
         self._status: Optional[ProcStatus] = None
 
         layout = QVBoxLayout(self)
@@ -63,7 +65,18 @@ class DeployPanel(QWidget):
         zip_row.addWidget(self._choose_button)
         layout.addLayout(zip_row)
 
-        hint = QLabel("只接受 .zip；可直接把 zip 拖到窗口。上传前会自动清理远端同名文件 / 目录。")
+        folder_row = QHBoxLayout()
+        self._choose_folder_button = QPushButton("选择文件夹（自动打包为 zip）…")
+        self._choose_folder_button.setObjectName("FlatButton")
+        self._choose_folder_button.clicked.connect(self.choose_folder_requested.emit)
+        folder_row.addWidget(self._choose_folder_button)
+        folder_row.addStretch(1)
+        layout.addLayout(folder_row)
+
+        hint = QLabel(
+            "只接受 .zip；也可以选择文件夹，程序会先自动打包为 zip 再上传。"
+            "支持把 zip 或文件夹直接拖到窗口。"
+        )
         hint.setObjectName("MutedLabel")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -186,6 +199,11 @@ class DeployPanel(QWidget):
         self._busy = busy
         self._update_buttons()
 
+    def set_zipping(self, zipping: bool) -> None:
+        """本地压缩文件夹期间禁用相关按钮。"""
+        self._zipping = bool(zipping)
+        self._update_buttons()
+
     def set_status(self, status: Optional[ProcStatus]) -> None:
         self._status = status
         self._render_status()
@@ -219,8 +237,10 @@ class DeployPanel(QWidget):
             self._status_label.setStyleSheet("color: #8b929c; font-weight: 600;")
 
     def _update_buttons(self) -> None:
-        ready = self._connected and not self._busy
-        self._choose_button.setEnabled(not self._busy)
+        idle = not self._busy and not self._zipping
+        ready = self._connected and idle
+        self._choose_button.setEnabled(idle)
+        self._choose_folder_button.setEnabled(idle)
         self._deploy_button.setEnabled(bool(self._zip_path) and ready)
         self._browse_project_button.setEnabled(ready)
         has_project = bool(self._project_dir)
@@ -229,7 +249,7 @@ class DeployPanel(QWidget):
         self._stop_button.setEnabled(ready and has_project and running)
         self._refresh_button.setEnabled(ready and has_project)
         self._log_button.setEnabled(ready and has_project)
-        self._zip_edit.setEnabled(not self._busy)
+        self._zip_edit.setEnabled(idle)
         self._progress.setEnabled(True)
 
     def _emit_deploy(self) -> None:

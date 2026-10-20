@@ -14,6 +14,7 @@ from PySide6.QtCore import QThread, Signal
 
 from ..core.deployer import DeployResult, Deployer
 from ..core.errors import BrmError
+from ..core.local_zip import create_zip_from_folder
 from ..core.logbook import DeployLog
 from ..core.proc_control import ProcControl
 from ..core.robots import Robot
@@ -151,6 +152,28 @@ class DeleteWorker(BaseWorker):
         else:
             sftp.remove_file(self.path)
         return self.path
+
+
+class ZipFolderWorker(BaseWorker):
+    """把本地文件夹压缩成 zip（选择文件夹部署时使用）。"""
+
+    progress = Signal(int)
+    zip_created = Signal(object)
+
+    def __init__(self, source_dir: Path, dest_dir: Path, parent=None) -> None:
+        super().__init__(parent)
+        self.source_dir = Path(source_dir)
+        self.dest_dir = Path(dest_dir)
+
+    def execute(self):
+        result = create_zip_from_folder(
+            self.source_dir,
+            self.dest_dir,
+            progress=self.progress.emit,
+            cancel_event=self._cancel_event,
+        )
+        self.zip_created.emit(result)
+        return result
 
 
 class DeployWorker(BaseWorker):

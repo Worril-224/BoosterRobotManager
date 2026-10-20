@@ -15,7 +15,7 @@
 | R0 | 密码设置与自动复用 | 默认密码只需设置一次，之后所有连接默认复用；仅认证失败时询问重输 |
 | R1 | 多机器人管理 | 左侧列表显示名称 / IP / 在线状态，支持新增、编辑、删除、断开连接 |
 | R2 | 远端文件浏览 | 目录列表、进入 / 上级 / 地址栏跳转、文本预览（前 200 KB）、下载、删除 |
-| R3 | 上传 zip | 选择或拖拽 zip，SFTP 上传并显示实时进度百分比 |
+| R3 | 上传 zip | 选择或拖拽 zip；**选择/拖入文件夹时先自动打包成 zip**，再上传并显示实时进度百分比 |
 | R4 | 同名清理 | 上传前自动删除远端同名 zip 与解压目录 |
 | R5 | 文件白名单 | 只允许 `.zip`，本地扩展名 + 文件头 + 远端二次校验 |
 | R6 | 解压与项目目录 | 自动识别唯一顶层目录，避免 `xxx/xxx/` 双重嵌套 |
@@ -114,7 +114,7 @@ Windows 下把 `.venv/bin/python` 换成 `.venv\Scripts\python` 即可；也可�
 1. 点击右上角 **⚙ 密码设置**，输入机器人密码并保存（Booster 出厂默认密码通常为 `booster`，请以实际为准）。
 2. 在左侧点击机器人，程序会 **自动使用已保存密码登录**，成功后状态变绿「已连接」。
 3. 在 **文件浏览** 区查看 `/home/booster/`，双击目录进入，双击文本文件预览。
-4. 在右侧 **部署** 面板选择（或拖入）zip 工程，点击 **② 上传并部署**：
+4. 在右侧 **部署** 面板选择（或拖入）zip 工程；**也可以直接选择/拖入工程文件夹，程序会先在本地自动打包成 zip**。点击 **② 上传并部署**：
    校验 → 清理远端同名文件 → 上传 → 解压 → 定位项目目录 → 编译 → 授权 start.sh。
 5. 编译成功后点击 **▶ 启动**；用 **刷新状态**、**查看启动日志**、**■ 停止** 管理服务。
 
@@ -139,6 +139,7 @@ BoosterRobotManager/
 │   │   ├── zipguard.py          # zip 白名单 / 非法路径校验
 │   │   ├── scripts.py           # build.sh / start.sh 查找规则
 │   │   ├── deployer.py          # 9 阶段部署流水线
+│   │   ├── local_zip.py         # 选择文件夹时本地自动打包 zip
 │   │   ├── proc_control.py      # start.sh 启动 / 停止 / 状态 / 日志
 │   │   ├── remote_env.py        # 远端 ROS 环境（setup.bash）自动加载
 │   │   ├── logbook.py           # 本地部署日志（密码打码）
@@ -155,7 +156,8 @@ BoosterRobotManager/
 │   │   ├── workers.py           # QThread 工作线程
 │   │   └── theme.py             # 深色 QSS
 │   ├── config/robots.json       # 机器人配置（示例，无真实密码）
-│   └── logs/                    # 本地部署日志（首次部署时创建）
+│   ├── logs/                    # 本地部署日志（首次部署时创建）
+│   └── temp/                    # 文件夹自动打包的临时 zip（退出时清理）
 ├── tests/                       # 121 个自动化测试（含本地 FakeRemote 集成测试）
 ├── tools/
 │   ├── selfcheck.py             # 交付自检脚本
@@ -226,6 +228,11 @@ BoosterRobotManager/
 4. **启动 / 停止**：启动用 `setsid` + `nohup` 后台运行，PID / 日志分别写入 `Workspace/<项目名>.start.pid` / `.start.log`。停止时如果项目里有 `scripts/stop.sh`，优先执行它（多节点 ROS 工程只有 stop.sh 知道该停哪些进程）；没有 stop.sh 才回退到 `kill -TERM -<pid>` → `kill -KILL -<pid>` → `pkill -f <项目目录>/scripts/start.sh`。
 5. **危险路径保护**：部署相关删除只允许发生在配置的上传目录内；文件浏览删除只允许在文件浏览根目录内，且不能删除根目录本身。
 6. **删除正在运行的服务工程**：部署前若检测到服务正在运行，会提示「是否先停止服务再部署」；如果选择继续，部署会清理工程目录，请自行确认风险。
+8. **文件夹自动打包**：部署面板选择/拖入文件夹时，程序用 Python 标准库 `zipfile` 在本地打包成 zip 再上传，规则：
+   - zip 内保留顶层文件夹（解压后为 `<文件夹名>/...`）；
+   - 自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录以及 `.DS_Store` / `*.pyc`；
+   - 保留文件可执行位，并给所有 `.sh` 自动补执行位（Windows 源文件没有 Unix 执行位）；跳过符号链接；
+   - 临时 zip 存放在 `brm/temp/`，程序退出时自动清理。
 7. **远端 ROS 环境自动加载**：通过 SSH 非交互执行命令时不会加载 `~/.bashrc`，`ros2` / `colcon` 可能不在 PATH。BRM 会在编译、启动、停止前自动 source：
    - `/opt/ros/*/setup.bash`（ROS 发行版）
    - `/opt/booster/BoosterRos2/install/setup.bash`（Booster 机器人 ROS 工作空间）
@@ -315,6 +322,9 @@ BoosterRobotManager/
 
 **Q13：start.sh 跑完就退出了，BRM 一直显示「未运行」或停止失败？**
 这类工程通常是「一次性启动脚本」：start.sh 拉起 vision / brain / game_controller 等后台节点后自己退出，PID 文件自然失效。BRM 现在会按「工作目录在项目下的进程」判断状态（显示「运行中（检测到 N 个项目进程）」），停止时优先执行项目的 `scripts/stop.sh`。若项目没有 `stop.sh`，BRM 无法判断要停哪些节点，建议补一个。
+
+**Q14：选择文件夹后为什么还要等一会儿？**
+选择或拖入文件夹时，程序会先在本地用 Python 标准库把它压缩成 zip（进度条显示「正在压缩 xx%」），压缩完成后才上传。zip 内会保留顶层文件夹，并自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录；临时 zip 保存在 `brm/temp/`，程序退出时自动清理。
 
 ---
 

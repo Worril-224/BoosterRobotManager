@@ -39,6 +39,8 @@ APP_ROOT = _resolve_app_root()
 CONFIG_DIR = APP_ROOT / "config"
 CONFIG_PATH = CONFIG_DIR / "robots.json"
 LOG_DIR = APP_ROOT / "logs"
+# 选择文件夹部署时，自动打包的 zip 临时存放目录
+TEMP_DIR = APP_ROOT / "temp"
 
 # ---------------------------------------------------------------------------
 # 机器人侧默认约定

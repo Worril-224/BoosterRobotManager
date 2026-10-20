@@ -26,6 +26,11 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME_CN, __version__, constants
 from ..core.deployer import DeployResult
+from ..core.local_zip import (
+    LocalZipResult,
+    cleanup_temp_archives,
+    describe_result,
+)
 from ..core.errors import AuthFailedError, BrmError, DeployCancelledError
 from ..core.proc_control import ProcStatus
 from ..core.robots import Robot, RobotStore
@@ -50,6 +55,7 @@ from .workers import (
     ListDirWorker,
     PreviewWorker,
     ProcWorker,
+    ZipFolderWorker,
 )
 
 
@@ -104,6 +110,7 @@ class MainWindow(QMainWindow):
         self._workers: Set[BaseWorker] = set()
         self._connect_worker: Optional[BaseWorker] = None
         self._deploy_worker: Optional[BaseWorker] = None
+        self._zip_worker: Optional[BaseWorker] = None
         self._proc_worker: Optional[BaseWorker] = None
         self._nav_worker: Optional[BaseWorker] = None
         self._tail_worker: Optional[BaseWorker] = None
@@ -117,6 +124,8 @@ class MainWindow(QMainWindow):
         self._nav_seq = 0
         self._pending_deploy: Optional[Path] = None
         self._tail_dialog: Optional[ServiceLogDialog] = None
+        self._temp_zips: Set[Path] = set()
+        self._closing = False
 
         self._build_ui()
         self.setStyleSheet(APP_QSS)
@@ -125,6 +134,9 @@ class MainWindow(QMainWindow):
         self._refresh_robot_list()
         self._refresh_password_state()
         self._apply_state()
+        removed = cleanup_temp_archives(constants.TEMP_DIR, older_than_seconds=24 * 3600)
+        if removed:
+            self._append_log(f"已清理 {removed} 个过期临时打包文件。")
         self._append_log(
             "Booster 机器人管理器已启动。请先在左侧选择机器人，"
             "程序会自动使用已保存的密码登录。"
@@ -184,6 +196,7 @@ class MainWindow(QMainWindow):
         self.file_panel.delete_requested.connect(self._delete_remote)
 
         self.deploy_panel.choose_zip_requested.connect(self._choose_zip)
+        self.deploy_panel.choose_folder_requested.connect(self._choose_folder)
         self.deploy_panel.deploy_requested.connect(self._deploy)
         self.deploy_panel.start_requested.connect(lambda: self._proc_action("start"))
         self.deploy_panel.stop_requested.connect(lambda: self._proc_action("stop"))
@@ -825,21 +838,88 @@ class MainWindow(QMainWindow):
         if path:
             self._set_zip(Path(path))
 
-    def _set_zip(self, path: Path) -> None:
+    def _choose_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "选择要打包并部署的文件夹", str(Path.home())
+        )
+        if folder:
+            self._zip_folder(Path(folder))
+
+    def _zip_folder(self, folder: Path) -> None:
+        """选择的是文件夹时，先在工作线程里压缩成 zip，再交给部署流程。"""
+        if self._busy or self._proc_busy:
+            return
+        if self._zip_worker is not None and self._zip_worker.isRunning():
+            return
+        if not folder.is_dir():
+            QMessageBox.warning(self, "不是文件夹", f"路径不是文件夹：\n{folder}")
+            return
+
+        self._append_log(f"正在压缩文件夹：{folder}")
+        self.deploy_panel.set_zipping(True)
+        self.deploy_panel.set_progress(0, "正在压缩…")
+
+        worker = ZipFolderWorker(folder, constants.TEMP_DIR)
+        self._zip_worker = worker
+        self._track(worker)
+        worker.log.connect(self.log_line)
+        worker.progress.connect(self._on_zip_progress)
+        worker.zip_created.connect(self._on_zip_created)
+        worker.failed.connect(self._on_zip_failed)
+        worker.finished.connect(lambda w=worker: self._on_zip_worker_finished(w))
+        worker.start()
+
+    def _on_zip_progress(self, percent: int) -> None:
+        self.deploy_panel.set_progress(percent, f"正在压缩 {percent}%")
+
+    def _on_zip_created(self, result: LocalZipResult) -> None:
+        self._temp_zips.add(result.path)
+        for old in list(self._temp_zips):
+            if old != result.path:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+                self._temp_zips.discard(old)
+        self._append_log(describe_result(result))
+        self._set_zip(result.path, origin_dir=result.source_dir)
+        if self.deploy_panel.zip_path == result.path:
+            self.deploy_panel.set_progress(100, "压缩完成，可以部署")
+
+    def _on_zip_failed(self, error: BrmError) -> None:
+        self.deploy_panel.set_progress(0, "压缩失败")
+        self._append_log(f"压缩失败：{error.title} - {error.message}")
+        if self._closing:
+            return
+        QMessageBox.warning(self, error.title, error.user_message())
+
+    def _on_zip_worker_finished(self, worker: BaseWorker) -> None:
+        if self._zip_worker is worker:
+            self._zip_worker = None
+        self.deploy_panel.set_zipping(False)
+
+    def _set_zip(self, path: Path, origin_dir: Optional[Path] = None) -> None:
         try:
             inspection = inspect_zip(path)
         except BrmError as exc:
             self.deploy_panel.set_zip(None)
             self._append_log(f"文件校验失败：{exc.message}")
-            QMessageBox.warning(self, exc.title, exc.user_message())
+            if not self._closing:
+                QMessageBox.warning(self, exc.title, exc.user_message())
             return
         self.deploy_panel.set_zip(path)
         from ..core.util import human_size
 
-        self._append_log(
-            f"已选择 zip：{path.name}（{human_size(inspection.size)}，"
-            f"{inspection.entry_count} 个条目）"
-        )
+        if origin_dir is not None:
+            self._append_log(
+                f"已选择自动打包的 zip：{path.name}（来源文件夹：{origin_dir}，"
+                f"{human_size(inspection.size)}，{inspection.entry_count} 个条目）"
+            )
+        else:
+            self._append_log(
+                f"已选择 zip：{path.name}（{human_size(inspection.size)}，"
+                f"{inspection.entry_count} 个条目）"
+            )
         self.statusBar().showMessage(f"已选择：{path.name}", 4000)
 
     def _deploy(self, zip_path: str) -> None:
@@ -1181,7 +1261,10 @@ class MainWindow(QMainWindow):
                 continue
             path = Path(url.toLocalFile())
             if path.is_dir():
-                continue
+                self._append_log(f"拖入文件夹，准备自动打包：{path}")
+                self._zip_folder(path)
+                event.acceptProposedAction()
+                return
             self._set_zip(path)
             event.acceptProposedAction()
             return
@@ -1210,6 +1293,7 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event) -> None:
+        self._closing = True
         if self._deploy_worker is not None and self._deploy_worker.isRunning():
             answer = QMessageBox.question(
                 self,
@@ -1218,6 +1302,7 @@ class MainWindow(QMainWindow):
                 "退出将取消部署；远端已经执行过的步骤不会回滚。",
             )
             if answer != QMessageBox.StandardButton.Yes:
+                self._closing = False
                 event.ignore()
                 return
 
@@ -1228,5 +1313,12 @@ class MainWindow(QMainWindow):
                 worker.terminate()
                 worker.wait(500)
 
+        for path in list(self._temp_zips):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        self._temp_zips.clear()
+        cleanup_temp_archives(constants.TEMP_DIR, older_than_seconds=24 * 3600)
         self.manager.disconnect()
         super().closeEvent(event)
