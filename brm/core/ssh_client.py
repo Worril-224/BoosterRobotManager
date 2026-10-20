@@ -319,6 +319,29 @@ class SSHSession:
             # 界面回调异常不应打断命令输出读取
             pass
 
+    def open_stream_channel(self, command: str):
+        """为 ``tail -f`` 等长命令打开一个独立 channel。
+
+        与 :meth:`exec_stream` 不同，这里不在读取期间持有会话锁，
+        因此可以在另一个线程里持续读取，同时不影响状态查询 / 启停等操作。
+        调用方负责关闭返回的 channel。
+        """
+        with self._lock:
+            client = self._ensure_connected()
+            transport = client.get_transport()
+            if transport is None:
+                raise SessionNotConnectedError("SSH 通道不可用，请重新连接。")
+            try:
+                channel = transport.open_session(timeout=self.connect_timeout)
+                channel.set_combine_stderr(True)
+                channel.settimeout(0.5)
+                channel.exec_command(command)
+                return channel
+            except BrmError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise classify_connection_error(exc, self.host, self.port) from exc
+
     # ------------------------------------------------------------------
     # SFTP
     # ------------------------------------------------------------------

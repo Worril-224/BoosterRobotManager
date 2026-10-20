@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import socket
 import threading
 from pathlib import Path
 from typing import List, Optional
@@ -21,6 +22,7 @@ from ..core.robots import Robot
 from ..core.scripts import find_script
 from ..core.session_manager import SessionManager
 from ..core.sftp_client import RemoteEntry
+from ..core.util import quote
 
 
 class BaseWorker(QThread):
@@ -272,6 +274,81 @@ class ProcWorker(BaseWorker):
         if self.action == "tail":
             return control.tail_log(self.project_name)
         raise BrmError(f"未知的服务操作：{self.action}")
+
+
+class TailLogWorker(BaseWorker):
+    """持续执行 ``tail -f <远端日志>`` 并把新行通过信号发给界面。
+
+    使用独立的 SSH channel，读取期间不持有会话锁，关闭对话框时
+    由 :meth:`stop` 关闭 channel 即可中断。
+    """
+
+    stream_line = Signal(str)
+
+    def __init__(self, session, remote_path: str, parent=None) -> None:
+        super().__init__(parent)
+        self.session = session
+        self.remote_path = remote_path
+        self._channel = None
+        self._channel_lock = threading.Lock()
+
+    def stop(self) -> None:
+        self.cancel()
+        with self._channel_lock:
+            channel = self._channel
+        if channel is not None:
+            try:
+                channel.close()
+            except Exception:
+                pass
+
+    def execute(self) -> int:
+        command = f"tail -f {quote(self.remote_path)}"
+        channel = self.session.open_stream_channel(command)
+        with self._channel_lock:
+            self._channel = channel
+        pending = ""
+        exit_code = -1
+        try:
+            while not self.cancelled:
+                try:
+                    data = channel.recv(65536)
+                except socket.timeout:
+                    if self.cancelled:
+                        break
+                    try:
+                        if channel.exit_status_ready() and not channel.recv_ready():
+                            break
+                    except Exception:
+                        break
+                    continue
+                except Exception as exc:  # noqa: BLE001
+                    if self.cancelled:
+                        break
+                    raise BrmError(
+                        "读取远端日志失败。",
+                        detail=f"{type(exc).__name__}: {exc}",
+                    ) from exc
+                if not data:
+                    break
+                pending += data.decode("utf-8", errors="replace")
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    self.stream_line.emit(line.rstrip("\r"))
+            if pending:
+                self.stream_line.emit(pending.rstrip("\r"))
+            try:
+                exit_code = channel.recv_exit_status()
+            except Exception:
+                exit_code = -1
+        finally:
+            with self._channel_lock:
+                self._channel = None
+            try:
+                channel.close()
+            except Exception:
+                pass
+        return exit_code
 
 
 class FindScriptWorker(BaseWorker):

@@ -35,8 +35,9 @@ from ..core.errors import AuthFailedError, BrmError, DeployCancelledError
 from ..core.proc_control import ProcStatus
 from ..core.robots import Robot, RobotStore
 from ..core.session_manager import SessionManager
-from ..core.util import normalize_remote_dir, strip_trailing_slash
+from ..core.util import normalize_remote_dir, posix_join, strip_trailing_slash
 from ..core.zipguard import inspect_zip
+from .brain_log_monitor import BrainLogMonitorDialog
 from .deploy_panel import DeployPanel
 from .file_browser import FileBrowserPanel, TextPreviewDialog
 from .password_dialog import PasswordDialog
@@ -124,6 +125,7 @@ class MainWindow(QMainWindow):
         self._nav_seq = 0
         self._pending_deploy: Optional[Path] = None
         self._tail_dialog: Optional[ServiceLogDialog] = None
+        self._brain_monitor: Optional[BrainLogMonitorDialog] = None
         self._temp_zips: Set[Path] = set()
         self._closing = False
 
@@ -202,6 +204,7 @@ class MainWindow(QMainWindow):
         self.deploy_panel.stop_requested.connect(lambda: self._proc_action("stop"))
         self.deploy_panel.status_requested.connect(lambda: self._proc_action("status"))
         self.deploy_panel.view_log_requested.connect(self._view_start_log)
+        self.deploy_panel.monitor_brain_requested.connect(self._monitor_brain)
         self.deploy_panel.browse_project_requested.connect(self._browse_project)
 
     def _build_topbar(self) -> QHBoxLayout:
@@ -600,6 +603,12 @@ class MainWindow(QMainWindow):
         self._disconnect_current(verbose=True)
 
     def _disconnect_current(self, verbose: bool = True) -> None:
+        if self._brain_monitor is not None:
+            try:
+                self._brain_monitor.close()
+            except Exception:
+                pass
+            self._brain_monitor = None
         name = self.manager.robot_name
         was_connected = self.manager.connected or name is not None
         self.manager.disconnect()
@@ -1185,6 +1194,49 @@ class MainWindow(QMainWindow):
         self._proc_action("status")
 
     # ------------------------------------------------------------------
+    # brain.log 实时监视
+    # ------------------------------------------------------------------
+    def _monitor_brain(self) -> None:
+        if not self.manager.connected:
+            QMessageBox.warning(self, "未连接", "请先连接机器人。")
+            return
+        context = self._project
+        if context is None:
+            QMessageBox.information(
+                self,
+                "请先选择项目",
+                "请先完成一次部署，或点击「选择 Workspace 里的已有项目…」。",
+            )
+            return
+        try:
+            session = self.manager.session()
+        except BrmError as exc:
+            QMessageBox.warning(self, exc.title, exc.user_message())
+            return
+
+        remote_path = posix_join(context.project_dir, "brain.log")
+        if self._brain_monitor is not None:
+            try:
+                self._brain_monitor.close()
+            except Exception:
+                pass
+            self._brain_monitor = None
+
+        dialog = BrainLogMonitorDialog(
+            session, remote_path, context.project_name, self
+        )
+        self._brain_monitor = dialog
+        dialog.finished.connect(lambda _result, d=dialog: self._clear_brain_monitor(d))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._append_log(f"开始实时监视：tail -f {remote_path}")
+
+    def _clear_brain_monitor(self, dialog: BrainLogMonitorDialog) -> None:
+        if self._brain_monitor is dialog:
+            self._brain_monitor = None
+
+    # ------------------------------------------------------------------
     # 启动日志查看
     # ------------------------------------------------------------------
     def _view_start_log(self) -> None:
@@ -1307,6 +1359,13 @@ class MainWindow(QMainWindow):
                 self._closing = False
                 event.ignore()
                 return
+
+        if self._brain_monitor is not None:
+            try:
+                self._brain_monitor.close()
+            except Exception:
+                pass
+            self._brain_monitor = None
 
         for worker in list(self._workers):
             worker.cancel()

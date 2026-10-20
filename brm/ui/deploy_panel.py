@@ -31,6 +31,7 @@ class DeployPanel(QWidget):
     stop_requested = Signal()
     status_requested = Signal()
     view_log_requested = Signal()
+    monitor_brain_requested = Signal()
     browse_project_requested = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -171,9 +172,14 @@ class DeployPanel(QWidget):
         self._log_button = QPushButton("查看启动日志")
         self._log_button.setObjectName("FlatButton")
         self._log_button.clicked.connect(self.view_log_requested.emit)
+        self._monitor_button = QPushButton("监视 brain.log")
+        self._monitor_button.setObjectName("FlatButton")
+        self._monitor_button.setToolTip("实时 tail -f 项目目录下的 brain.log（非模态窗口）")
+        self._monitor_button.clicked.connect(self.monitor_brain_requested.emit)
         button_row.addWidget(self._start_button)
         button_row.addWidget(self._stop_button)
         button_row.addWidget(self._log_button)
+        button_row.addWidget(self._monitor_button)
         layout.addLayout(button_row)
 
         return group
@@ -300,6 +306,7 @@ class DeployPanel(QWidget):
         self._stop_button.setEnabled(ready and has_project and running)
         self._refresh_button.setEnabled(ready and has_project)
         self._log_button.setEnabled(ready and has_project)
+        self._monitor_button.setEnabled(ready and has_project)
         self._zip_edit.setEnabled(idle)
         self._progress.setEnabled(True)
 
