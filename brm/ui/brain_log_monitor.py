@@ -44,9 +44,16 @@ class BrainLogMonitorDialog(QDialog):
         self._closed = False
         self._worker: Optional[TailLogWorker] = None
         self._pending_lines: List[str] = []
+        self._recent_lines: List[str] = []
+        self._last_batch: List[str] = []
         self._flush_timer = QTimer(self)
         self._flush_timer.setSingleShot(True)
         self._flush_timer.timeout.connect(self._flush_pending)
+        # 自动适配窗口大小用独立的防抖定时器：日志持续输出时保持窗口稳定，
+        # 等日志停顿约 0.7 秒后再按最新一帧调整一次。
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._apply_auto_fit)
 
         self.setWindowTitle(
             f"实时监视 brain.log{' - ' + project_name if project_name else ''}"
@@ -85,9 +92,11 @@ class BrainLogMonitorDialog(QDialog):
         self._autosize_check = QCheckBox("自动调整窗口大小（跟随日志帧）")
         self._autosize_check.setChecked(True)
         self._autosize_check.setToolTip(
-            "每一批新日志到达时，按该批内容的宽高自动调整窗口大小；"
+            "日志持续输出时窗口大小保持稳定，不会每一帧都跳动；"
+            "日志停顿约 0.7 秒后，才按最新一帧内容自动适配一次。"
             "如不想被自动调整，可取消勾选后手动拖动窗口。"
         )
+        self._autosize_check.toggled.connect(self._on_autosize_toggled)
         clear_button = QPushButton("清空")
         clear_button.setObjectName("FlatButton")
         clear_button.clicked.connect(self._view.clear)
@@ -119,29 +128,59 @@ class BrainLogMonitorDialog(QDialog):
             return
         self._pending_lines.append(line)
         if not self._flush_timer.isActive():
-            self._flush_timer.start(200)
+            self._flush_timer.start(250)
 
     def _flush_pending(self) -> None:
         if self._closed or not self._pending_lines:
             return
         lines = self._pending_lines
         self._pending_lines = []
+        self._last_batch = lines
+        self._recent_lines.extend(lines)
+        if len(self._recent_lines) > 600:
+            self._recent_lines = self._recent_lines[-600:]
 
         scrollbar = self._view.verticalScrollBar()
-        at_bottom = scrollbar.value() >= scrollbar.maximum() - 4
-        self._view.appendPlainText("\n".join(lines))
+        old_value = scrollbar.value()
+        at_bottom = old_value >= scrollbar.maximum() - 4
+
+        # 一次插入整批文本，并在插入期间关闭重绘，避免逐行刷新造成闪烁。
+        self._view.setUpdatesEnabled(False)
+        try:
+            self._view.appendPlainText("\n".join(lines))
+        finally:
+            self._view.setUpdatesEnabled(True)
+
         if at_bottom:
             scrollbar.setValue(scrollbar.maximum())
+        else:
+            scrollbar.setValue(old_value)
 
         if self._autosize_check.isChecked():
-            self._autofit(lines)
+            # 防抖：持续有日志到达时不断重置，窗口保持稳定；
+            # 只有日志停顿后才调整一次大小。
+            self._resize_timer.start(700)
+
+    def _on_autosize_toggled(self, checked: bool) -> None:
+        if checked:
+            self._resize_timer.start(500)
+        else:
+            self._resize_timer.stop()
+
+    def _apply_auto_fit(self) -> None:
+        if self._closed or not self._autosize_check.isChecked():
+            return
+        if self._last_batch:
+            self._autofit(self._last_batch)
 
     def _autofit(self, lines: List[str]) -> None:
-        """按这一批新日志的内容宽高调整窗口大小（有上下限）。"""
+        """按最新一帧日志的宽高调整窗口大小（带迟滞，避免反复微调）。"""
         if not lines:
             return
+        if self.isMaximized() or self.isFullScreen():
+            return
         metrics = QFontMetrics(self._view.font())
-        recent = lines[-300:]
+        recent = self._recent_lines[-400:] or lines[-300:]
         max_width = max(
             (metrics.horizontalAdvance(line) for line in recent), default=0
         )
@@ -157,6 +196,9 @@ class BrainLogMonitorDialog(QDialog):
                 int(available.height() * 0.82),
             ),
         )
+        # 变化很小时不调整，避免窗口边缘一直抖动。
+        if abs(width - self.width()) < 50 and abs(height - self.height()) < 60:
+            return
         self.resize(width, height)
 
     # ------------------------------------------------------------------
@@ -193,6 +235,7 @@ class BrainLogMonitorDialog(QDialog):
     def closeEvent(self, event) -> None:
         self._closed = True
         self._flush_timer.stop()
+        self._resize_timer.stop()
         worker = self._worker
         if worker is not None:
             try:
