@@ -19,3 +19,9 @@ Booster机器人管理器.app/
 启动 Booster 机器人管理器.command
 
 
+
+# 文件夹自动打包的临时 zip
+brm/temp/
+
+# 机器人配置包含用户密码/机器人列表，不纳入版本控制（程序首次启动会自动创建）
+brm/config/robots.json
