@@ -112,8 +112,7 @@ class RerunViewerLauncher:
                 pass
 
     def is_running(self) -> bool:
-        if self._process is not None and self._process.poll() is None:
-            return True
+        """查看器是否真正就绪（以 9876 端口监听为准，而不是进程还活着）。"""
         return self._port_open()
 
     # ------------------------------------------------------------------
@@ -133,40 +132,43 @@ class RerunViewerLauncher:
         start.sh 之前调用它），避免卡住界面。
         """
         if self.is_running():
-            log("rerun 查看器已在运行（gRPC 9876），跳过自动打开。")
+            log("rerun 查看器已在运行（gRPC 9876），无需等待。")
             return True
 
-        for directory in self._candidate_dirs():
-            target = self._find_launch_target(directory)
-            if target is None:
-                continue
-            try:
-                if target.suffix.lower() == ".app":
-                    subprocess.Popen(
-                        ["open", str(target)],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True,
-                    )
-                else:
-                    self._process = subprocess.Popen(
-                        [str(target)],
-                        cwd=str(directory),
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True,
-                    )
-            except OSError as exc:
-                log(f"启动 rerun 查看器失败（{target}）：{exc}")
-                continue
-            log(f"已启动 rerun 查看器：{target}，等待就绪…")
-            break
+        if self._process is not None and self._process.poll() is None:
+            log("检测到 rerun 进程仍在启动中，继续等待其监听 9876…")
         else:
-            log(
-                f"未找到 {RERUN_DIR_NAME}/rerun 或 rerun-cli-*.exe"
-                "（已查找工程目录和 BRM 目录），跳过 rerun。"
-            )
-            return None
+            for directory in self._candidate_dirs():
+                target = self._find_launch_target(directory)
+                if target is None:
+                    continue
+                try:
+                    if target.suffix.lower() == ".app":
+                        subprocess.Popen(
+                            ["open", str(target)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True,
+                        )
+                    else:
+                        self._process = subprocess.Popen(
+                            [str(target)],
+                            cwd=str(directory),
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True,
+                        )
+                except OSError as exc:
+                    log(f"启动 rerun 查看器失败（{target}）：{exc}")
+                    continue
+                log(f"已启动 rerun 查看器：{target}，等待就绪…")
+                break
+            else:
+                log(
+                    f"未找到 {RERUN_DIR_NAME}/rerun 或 rerun-cli-*.exe"
+                    "（已查找工程目录和 BRM 目录），跳过 rerun。"
+                )
+                return None
 
         deadline = time.monotonic() + max(0.5, ready_timeout)
         while time.monotonic() < deadline:
