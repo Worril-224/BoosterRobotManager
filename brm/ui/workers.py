@@ -261,6 +261,7 @@ class ProcWorker(BaseWorker):
         project_dir: str = "",
         start_script: str = "",
         password: str = "",
+        rerun_launcher=None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -271,8 +272,24 @@ class ProcWorker(BaseWorker):
         self.project_dir = project_dir
         self.start_script = start_script
         self.password = password
+        self.rerun_launcher = rerun_launcher
 
     def execute(self):
+        if self.action == "start" and self.rerun_launcher is not None:
+            self.log.emit("正在确认 rerun 查看器已就绪（需监听 9876）…")
+            ready = self.rerun_launcher.ensure_started(self.log.emit)
+            if ready is False:
+                raise BrmError(
+                    "rerun 查看器未就绪，已中止运行 start.sh。",
+                    hint=(
+                        "请确认 rerun-0.20.3（或 Windows rerun-cli-*.exe）已放置，"
+                        "并手动打开 rerun 确认 9876 端口监听后重试。"
+                    ),
+                )
+            if ready is None:
+                self.log.emit("未找到 rerun，跳过等待，继续运行 start.sh。")
+            else:
+                self.log.emit("rerun 已就绪，开始运行 start.sh。")
         control = ProcControl(self.session, self.workspace_dir, log=self.log.emit)
         if self.action == "status":
             return control.status(self.project_name, self.project_dir)

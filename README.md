@@ -21,7 +21,7 @@
 | R6 | 解压与项目目录 | 自动识别唯一顶层目录，避免 `xxx/xxx/` 双重嵌套 |
 | R7 | 编译 | 定位 `scripts/build.sh`，编译阶段同时给 `stop.sh` 授权；实时流式回显输出；**部署面板单独显示编译进度（百分比 / 已完成包数 / 输出行数 / 耗时）**，并显示退出码 |
 | R8 | 启停控制 | 启动 / 停止 / 刷新状态；启动时自动输入密码（sudo / systemctl）；停止优先执行项目 `scripts/stop.sh`；按项目进程识别一次性启动脚本；查看 start.log 末尾 200 行；**实时监视 brain.log（tail -f，窗口随日志帧自动调整大小）** |
-| R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 IP（只改 zip 内副本）；启动 start.sh 前自动打开 `rerun-0.20.3` 或根目录下的 Windows `rerun-cli-*.exe` 查看器 |
+| R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 IP（只改 zip 内副本）；启动 start.sh 前自动打开 `rerun-0.20.3` / Windows `rerun-cli-*.exe`，并等待其监听 9876 后再运行 start.sh |
 
 界面中所有耗时操作（连接、上传、编译、启停、文件读写）都在 `QThread` 中执行，不会阻塞界面。
 
@@ -121,7 +121,7 @@ Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 gi
    上传完成后进度区会切换到 **编译进度**（百分比 / 包数 / 输出行数 / 耗时），编译结束后保留最终结果。
 5. 编译成功后点击 **▶ 启动**；用 **刷新状态**、**查看启动日志**、**■ 停止** 管理服务。
 6. 启动后可点击 **「监视 brain.log」**，弹窗会实时执行 `tail -f <项目目录>/brain.log`；日志持续输出时窗口大小保持稳定、不会闪烁；日志停顿约 0.7 秒后才会按最新一帧自动适配一次（可取消勾选后手动调整）。
-7. 如果工程使用 rerun：打包时会自动把 `<工程>/src/brain/config/config.yaml` 中 `rerunLog.enable_tcp: true` 的 `server_ip` 改成本机 IP；点击启动时会先自动打开 `rerun-0.20.3` 查看器（清单见下方说明）。
+7. 如果工程使用 rerun：打包时会自动把 `<工程>/src/brain/config/config.yaml` 中 `rerunLog.enable_tcp: true` 的 `server_ip` 改成本机 IP；点击启动时会先自动打开 `rerun-0.20.3` 查看器，**等待其监听 9876 后才运行 start.sh**（最多等 30 秒；未放置 rerun 则跳过等待直接启动）。
 
 > 重新打开程序后无需再次输入密码：密码已持久化，连接时自动复用。
 
@@ -253,7 +253,9 @@ BoosterRobotManager/
    - 文件夹打包前查找 `<工程>/src/brain/config/config.yaml`；
    - 若 `rerunLog.enable_tcp: true`，只把 **zip 内**该文件的 `server_ip` 改为本机局域网 IP（本机源文件不动）；本机 IP 优先按到机器人的路由选择，保证机器人可访问；
    - 若 `enable_tcp: false`、没有该配置或拿不到本机 IP，则保持原样并记录日志；
-   - 点击「▶ 启动」时，在工程目录 / BRM 目录 / 当前目录查找 `rerun-0.20.3/rerun`（macOS 也支持 `Rerun*.app`），也支持直接放在根目录的 Windows `rerun-cli-*.exe`；如果本机 9876 端口已有查看器在监听则跳过，找不到只记日志、不阻塞 start.sh。
+   - 点击「▶ 启动」时，在工程目录 / BRM 目录 / 当前目录查找 `rerun-0.20.3/rerun`（macOS 也支持 `Rerun*.app`），也支持直接放在根目录的 Windows `rerun-cli-*.exe`；
+   - 启动后**等待 rerun 真正监听 9876 端口**（最多 30 秒）才继续运行 start.sh；若 9876 已监听则直接继续；
+   - 找到 rerun 但启动失败/退出/超时 → 中止本次 start.sh 并提示；本机完全没有 rerun → 记录日志后按原流程启动（兼容不使用 rerun 的工程）。
 
 ---
 
@@ -349,7 +351,7 @@ BoosterRobotManager/
 检查工程里是否有 `src/brain/config/config.yaml`，以及其中 `rerunLog.enable_tcp` 是否为 `true`；还要确认本机能获取到局域网 IP（BRM 日志会显示「本机局域网 IP」和修改说明）。`enable_tcp: false` 时按设计不会修改。
 
 **Q17：启动时没有自动打开 rerun-0.20.3？**
-BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`（Windows 为 `rerun.exe`，macOS 兼容 `Rerun*.app`），也支持直接放在根目录的 Windows `rerun-cli-*.exe`（v1.1.1 Windows 包已内置）。找不到只记录日志，不会阻止 start.sh；也可以手动打开查看器。若 9876 端口已有实例在监听，BRM 会跳过重复启动。
+BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`（Windows 为 `rerun.exe`，macOS 兼容 `Rerun*.app`），也支持直接放在根目录的 Windows `rerun-cli-*.exe`（v1.1.1 起 Windows 包已内置）。找到后会启动并等待 9876 端口就绪（最多 30 秒），就绪后才运行 start.sh；超时或进程退出会中止启动并提示。若本机完全没有 rerun，则跳过等待直接启动。
 
 **Q18：选择文件夹后为什么还要等一会儿？**
 选择或拖入文件夹时，程序会先在本地用 Python 标准库把它压缩成 zip（进度条显示「正在压缩 xx%」），压缩完成后才上传。zip 内会保留顶层文件夹，并自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录；临时 zip 保存在 `brm/temp/`，程序退出时自动清理。

@@ -11,6 +11,7 @@ from __future__ import annotations
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 
@@ -18,6 +19,7 @@ from .. import constants
 
 RERUN_DIR_NAME = "rerun-0.20.3"
 RERUN_GRPC_PORT = 9876
+RERUN_READY_TIMEOUT = 30.0
 
 
 class RerunViewerLauncher:
@@ -115,8 +117,21 @@ class RerunViewerLauncher:
         return self._port_open()
 
     # ------------------------------------------------------------------
-    def ensure_started(self, log: Callable[[str], None]) -> bool:
-        """若查看器未运行则启动；失败只记日志，不阻塞 start.sh。"""
+    def ensure_started(
+        self,
+        log: Callable[[str], None],
+        ready_timeout: float = RERUN_READY_TIMEOUT,
+    ) -> Optional[bool]:
+        """确保查看器就绪。
+
+        返回：
+        * ``True``：查看器已运行并监听 9876；
+        * ``None``：本机没有找到 rerun（视为未使用 rerun，调用方可继续）；
+        * ``False``：找到了 rerun 但启动失败/退出/等待就绪超时。
+
+        该方法可能阻塞，必须放在工作线程中调用（ProcWorker 会在运行
+        start.sh 之前调用它），避免卡住界面。
+        """
         if self.is_running():
             log("rerun 查看器已在运行（gRPC 9876），跳过自动打开。")
             return True
@@ -144,11 +159,27 @@ class RerunViewerLauncher:
             except OSError as exc:
                 log(f"启动 rerun 查看器失败（{target}）：{exc}")
                 continue
-            log(f"已自动打开 rerun 查看器：{target}")
-            return True
+            log(f"已启动 rerun 查看器：{target}，等待就绪…")
+            break
+        else:
+            log(
+                f"未找到 {RERUN_DIR_NAME}/rerun 或 rerun-cli-*.exe"
+                "（已查找工程目录和 BRM 目录），跳过 rerun。"
+            )
+            return None
+
+        deadline = time.monotonic() + max(0.5, ready_timeout)
+        while time.monotonic() < deadline:
+            if self._port_open():
+                log("rerun 查看器已就绪（gRPC 9876）。")
+                return True
+            if self._process is not None and self._process.poll() is not None:
+                code = self._process.returncode
+                log(f"rerun 进程已退出（退出码 {code}），未能就绪。")
+                return False
+            time.sleep(0.2)
 
         log(
-            f"未找到 {RERUN_DIR_NAME}/rerun（已查找工程目录和 BRM 目录），"
-            "跳过自动打开 rerun。"
+            f"等待 rerun 就绪超时（{ready_timeout:.0f} 秒），未检测到 9876 端口。"
         )
         return False

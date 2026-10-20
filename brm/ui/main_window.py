@@ -1081,10 +1081,7 @@ class MainWindow(QMainWindow):
         if robot is None:
             return
         if action == "start":
-            # 运行 start.sh 前先在本机打开 rerun 查看器（gRPC 9876），
-            # 这样机器人通过 rerunLog.server_ip 发来的数据可以直接显示。
             self._rerun_viewer.set_project_dir(self._local_project_dir)
-            self._rerun_viewer.ensure_started(self._append_log)
         self._proc_busy = True
         self._apply_state()
 
@@ -1102,6 +1099,9 @@ class MainWindow(QMainWindow):
             project_dir=context.project_dir,
             start_script=context.start_script,
             password=password,
+            rerun_launcher=(
+                self._rerun_viewer if action == "start" else None
+            ),
         )
         self._proc_worker = worker
         self._track(worker)
