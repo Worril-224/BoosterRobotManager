@@ -18,11 +18,12 @@ from ..core.errors import BrmError
 from ..core.local_zip import create_zip_from_folder
 from ..core.logbook import DeployLog
 from ..core.proc_control import ProcControl
+from ..core.rerun_config import prepare_zip_overrides
 from ..core.robots import Robot
 from ..core.scripts import find_script
 from ..core.session_manager import SessionManager
 from ..core.sftp_client import RemoteEntry
-from ..core.util import quote
+from ..core.util import get_local_ip, quote
 
 
 class BaseWorker(QThread):
@@ -162,18 +163,35 @@ class ZipFolderWorker(BaseWorker):
     progress = Signal(int)
     zip_created = Signal(object)
 
-    def __init__(self, source_dir: Path, dest_dir: Path, parent=None) -> None:
+    def __init__(
+        self,
+        source_dir: Path,
+        dest_dir: Path,
+        peer_host: str = "",
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.source_dir = Path(source_dir)
         self.dest_dir = Path(dest_dir)
+        self.peer_host = peer_host
 
     def execute(self):
+        local_ip = get_local_ip(self.peer_host)
+        overrides, update = prepare_zip_overrides(self.source_dir, local_ip)
+        if update.message:
+            self.log.emit(update.message)
+        if local_ip and update.enabled:
+            self.log.emit(f"本机局域网 IP：{local_ip}")
         result = create_zip_from_folder(
             self.source_dir,
             self.dest_dir,
             progress=self.progress.emit,
             cancel_event=self._cancel_event,
+            overrides=overrides,
         )
+        result.rerun_enabled = update.enabled
+        result.rerun_changed = update.changed
+        result.local_ip = local_ip
         self.zip_created.emit(result)
         return result
 

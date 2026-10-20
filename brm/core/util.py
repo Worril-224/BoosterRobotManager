@@ -160,3 +160,46 @@ def local_file_ok(path: Path) -> bool:
         return path.is_file()
     except OSError:
         return False
+
+
+
+def get_local_ip(peer_host: str = "") -> str:
+    """获取本机用于访问机器人的局域网 IPv4 地址。
+
+    优先使用到 ``peer_host`` 的路由（UDP connect 不会真正发包），这样选出的
+    网卡地址与机器人处于同一网络；拿不到时再尝试默认路由 / 主机名解析。
+    """
+    import socket
+
+    def valid(ip: str) -> bool:
+        return bool(ip) and not ip.startswith("127.") and ip != "0.0.0.0" and not ip.startswith("169.254.")
+
+    targets = []
+    if peer_host:
+        targets.append((peer_host, 22))
+    targets.extend([("8.8.8.8", 80), ("1.1.1.1", 80)])
+    for host, port in targets:
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.5)
+            sock.connect((host, port))
+            ip = sock.getsockname()[0]
+            if valid(ip):
+                return ip
+        except OSError:
+            continue
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if valid(ip):
+                return ip
+    except OSError:
+        pass
+    return ""

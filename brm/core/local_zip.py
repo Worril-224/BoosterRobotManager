@@ -12,7 +12,7 @@ import threading
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .errors import BrmError
 from .util import human_size, sanitize_filename
@@ -51,6 +51,9 @@ class LocalZipResult:
     file_count: int
     total_bytes: int
     skipped: List[str] = field(default_factory=list)
+    rerun_enabled: bool = False
+    rerun_changed: bool = False
+    local_ip: str = ""
 
 
 def _collect_files(source_dir: Path) -> Tuple[List[Tuple[Path, str]], int, List[str]]:
@@ -97,13 +100,16 @@ def create_zip_from_folder(
     dest_dir: Path,
     progress: Optional[Callable[[int], None]] = None,
     cancel_event: Optional[threading.Event] = None,
+    overrides: Optional[Dict[Path, bytes]] = None,
 ) -> LocalZipResult:
     """把 ``source_dir`` 压缩为 ``dest_dir/<文件夹名>.zip``。
 
     * zip 内包含顶层文件夹本身（解压后是 ``<文件夹名>/...``）；
     * 跳过 ``.git`` / ``build`` / ``install`` / ``__pycache__`` 等目录；
     * 保留可执行位（Unix 权限写入 zip external_attr）；
-    * 支持进度回调（0-100）与取消。
+    * 支持进度回调（0-100）与取消；
+    * ``overrides`` 可替换 zip 内指定源文件的内容（例如只改 zip 内的
+      config.yaml，而不动用户本地文件）。
     """
     source_dir = Path(source_dir)
     if not source_dir.is_dir():
@@ -152,6 +158,12 @@ def create_zip_from_folder(
                     # 避免远端执行 ./scripts/xxx.sh 时出现 Permission denied
                     mode = (info.external_attr >> 16) | 0o111
                     info.external_attr = (mode & 0xFFFF) << 16
+                replacement = (overrides or {}).get(source)
+                if replacement is not None:
+                    archive.writestr(info, replacement)
+                    written += len(replacement)
+                    report(force=True)
+                    continue
                 with source.open("rb") as reader, archive.open(info, "w") as writer:
                     while True:
                         if cancel_event is not None and cancel_event.is_set():

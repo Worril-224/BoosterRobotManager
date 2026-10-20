@@ -21,6 +21,7 @@
 | R6 | 解压与项目目录 | 自动识别唯一顶层目录，避免 `xxx/xxx/` 双重嵌套 |
 | R7 | 编译 | 定位 `scripts/build.sh`，编译阶段同时给 `stop.sh` 授权；实时流式回显输出；**部署面板单独显示编译进度（百分比 / 已完成包数 / 输出行数 / 耗时）**，并显示退出码 |
 | R8 | 启停控制 | 启动 / 停止 / 刷新状态；启动时自动输入密码（sudo / systemctl）；停止优先执行项目 `scripts/stop.sh`；按项目进程识别一次性启动脚本；查看 start.log 末尾 200 行；**实时监视 brain.log（tail -f，窗口随日志帧自动调整大小）** |
+| R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 IP（只改 zip 内副本）；启动 start.sh 前自动打开工程目录下的 `rerun-0.20.3` 查看器 |
 
 界面中所有耗时操作（连接、上传、编译、启停、文件读写）都在 `QThread` 中执行，不会阻塞界面。
 
@@ -120,6 +121,7 @@ Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 gi
    上传完成后进度区会切换到 **编译进度**（百分比 / 包数 / 输出行数 / 耗时），编译结束后保留最终结果。
 5. 编译成功后点击 **▶ 启动**；用 **刷新状态**、**查看启动日志**、**■ 停止** 管理服务。
 6. 启动后可点击 **「监视 brain.log」**，弹窗会实时执行 `tail -f <项目目录>/brain.log`；日志持续输出时窗口大小保持稳定、不会闪烁；日志停顿约 0.7 秒后才会按最新一帧自动适配一次（可取消勾选后手动调整）。
+7. 如果工程使用 rerun：打包时会自动把 `<工程>/src/brain/config/config.yaml` 中 `rerunLog.enable_tcp: true` 的 `server_ip` 改成本机 IP；点击启动时会先自动打开 `rerun-0.20.3` 查看器（清单见下方说明）。
 
 > 重新打开程序后无需再次输入密码：密码已持久化，连接时自动复用。
 
@@ -144,6 +146,8 @@ BoosterRobotManager/
 │   │   ├── deployer.py          # 9 阶段部署流水线
 │   │   ├── build_progress.py    # 解析编译输出进度（cmake/ninja/colcon）
 │   │   ├── local_zip.py         # 选择文件夹时本地自动打包 zip
+│   │   ├── rerun_config.py      # 打包前改写 rerunLog server_ip
+│   │   ├── rerun_viewer.py      # 启动 start.sh 前打开 rerun 查看器
 │   │   ├── proc_control.py      # start.sh 启动 / 停止 / 状态 / 日志
 │   │   ├── remote_env.py        # 远端 ROS 环境（setup.bash）自动加载
 │   │   ├── logbook.py           # 本地部署日志（密码打码）
@@ -173,6 +177,7 @@ BoosterRobotManager/
 │   └── build_launcher.py        # 生成 .app / .command 启动器
 ├── screenshots/                 # README / 报告用截图
 ├── dist-windows/                # 本地交叉构建输出（不提交，发布到 GitHub Releases）
+├── rerun-0.20.3/                # 本地 rerun 查看器（体积大，不提交）
 ├── Booster机器人管理器.app       # macOS 双击启动（由 build_launcher.py 生成）
 ├── 启动 Booster 机器人管理器.command  # macOS 终端启动器
 ├── run.py                       # 源码运行 / PyInstaller 打包入口
@@ -233,16 +238,22 @@ BoosterRobotManager/
 4. **启动 / 停止**：启动用 `setsid` + `nohup` 后台运行，PID / 日志分别写入 `Workspace/<项目名>.start.pid` / `.start.log`。停止时如果项目里有 `scripts/stop.sh`，优先执行它（多节点 ROS 工程只有 stop.sh 知道该停哪些进程）；没有 stop.sh 才回退到 `kill -TERM -<pid>` → `kill -KILL -<pid>` → `pkill -f <项目目录>/scripts/start.sh`。
 5. **危险路径保护**：部署相关删除只允许发生在配置的上传目录内；文件浏览删除只允许在文件浏览根目录内，且不能删除根目录本身。
 6. **删除正在运行的服务工程**：部署前若检测到服务正在运行，会提示「是否先停止服务再部署」；如果选择继续，部署会清理工程目录，请自行确认风险。
-8. **文件夹自动打包**：部署面板选择/拖入文件夹时，程序用 Python 标准库 `zipfile` 在本地打包成 zip 再上传，规则：
+7. **文件夹自动打包**：部署面板选择/拖入文件夹时，程序用 Python 标准库 `zipfile` 在本地打包成 zip 再上传，规则：
    - zip 内保留顶层文件夹（解压后为 `<文件夹名>/...`）；
    - 自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录以及 `.DS_Store` / `*.pyc`；
    - 保留文件可执行位，并给所有 `.sh` 自动补执行位（Windows 源文件没有 Unix 执行位）；跳过符号链接；
    - 临时 zip 存放在 `brm/temp/`，程序退出时自动清理。
-7. **远端 ROS 环境自动加载**：通过 SSH 非交互执行命令时不会加载 `~/.bashrc`，`ros2` / `colcon` 可能不在 PATH。BRM 会在编译、启动、停止前自动 source：
+8. **远端 ROS 环境自动加载**：通过 SSH 非交互执行命令时不会加载 `~/.bashrc`，`ros2` / `colcon` 可能不在 PATH。BRM 会在编译、启动、停止前自动 source：
    - `/opt/ros/*/setup.bash`（ROS 发行版）
    - `/opt/booster/BoosterRos2/install/setup.bash`（Booster 机器人 ROS 工作空间）
 
    文件不存在会自动跳过，日志中会输出 `[BRM] 已加载远端环境：...`。
+
+9. **rerun 配置与查看器**（R9）：
+   - 文件夹打包前查找 `<工程>/src/brain/config/config.yaml`；
+   - 若 `rerunLog.enable_tcp: true`，只把 **zip 内**该文件的 `server_ip` 改为本机局域网 IP（本机源文件不动）；本机 IP 优先按到机器人的路由选择，保证机器人可访问；
+   - 若 `enable_tcp: false`、没有该配置或拿不到本机 IP，则保持原样并记录日志；
+   - 点击「▶ 启动」时，在工程目录 / BRM 目录 / 当前目录查找 `rerun-0.20.3`，启动其中的 `rerun`（macOS 也支持 `Rerun*.app`）；如果本机 9876 端口已有查看器在监听则跳过，找不到只记日志、不阻塞 start.sh。
 
 ---
 
@@ -334,7 +345,13 @@ BoosterRobotManager/
 **Q15：监视 brain.log 时提示 tail 退出码 1？**
 说明项目的 `brain.log` 还不存在（通常是还没运行 start.sh，或工程目录选错）。先启动服务，确认项目目录下生成了 `brain.log`，再打开监视窗口。
 
-**Q16：选择文件夹后为什么还要等一会儿？**
+**Q16：打包后 rerun 的 server_ip 没变化？**
+检查工程里是否有 `src/brain/config/config.yaml`，以及其中 `rerunLog.enable_tcp` 是否为 `true`；还要确认本机能获取到局域网 IP（BRM 日志会显示「本机局域网 IP」和修改说明）。`enable_tcp: false` 时按设计不会修改。
+
+**Q17：启动时没有自动打开 rerun-0.20.3？**
+BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`（Windows 为 `rerun.exe`，macOS 兼容 `Rerun*.app`）。找不到只记录日志，不会阻止 start.sh；也可以手动打开查看器。若 9876 端口已有实例在监听，BRM 会跳过重复启动。
+
+**Q18：选择文件夹后为什么还要等一会儿？**
 选择或拖入文件夹时，程序会先在本地用 Python 标准库把它压缩成 zip（进度条显示「正在压缩 xx%」），压缩完成后才上传。zip 内会保留顶层文件夹，并自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录；临时 zip 保存在 `brm/temp/`，程序退出时自动清理。
 
 ---

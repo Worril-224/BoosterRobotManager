@@ -33,6 +33,7 @@ from ..core.local_zip import (
 )
 from ..core.errors import AuthFailedError, BrmError, DeployCancelledError
 from ..core.proc_control import ProcStatus
+from ..core.rerun_viewer import RerunViewerLauncher
 from ..core.robots import Robot, RobotStore
 from ..core.session_manager import SessionManager
 from ..core.util import normalize_remote_dir, posix_join, strip_trailing_slash
@@ -126,6 +127,8 @@ class MainWindow(QMainWindow):
         self._pending_deploy: Optional[Path] = None
         self._tail_dialog: Optional[ServiceLogDialog] = None
         self._brain_monitor: Optional[BrainLogMonitorDialog] = None
+        self._local_project_dir: Optional[Path] = None
+        self._rerun_viewer = RerunViewerLauncher()
         self._temp_zips: Set[Path] = set()
         self._closing = False
 
@@ -868,7 +871,11 @@ class MainWindow(QMainWindow):
         self.deploy_panel.set_zipping(True)
         self.deploy_panel.set_progress(0, "正在压缩…")
 
-        worker = ZipFolderWorker(folder, constants.TEMP_DIR)
+        robot = self.manager.current_robot()
+        peer_host = robot.host if robot is not None else ""
+        worker = ZipFolderWorker(
+            folder, constants.TEMP_DIR, peer_host=peer_host
+        )
         self._zip_worker = worker
         self._track(worker)
         worker.log.connect(self.log_line)
@@ -882,6 +889,8 @@ class MainWindow(QMainWindow):
         self.deploy_panel.set_progress(percent, f"正在压缩 {percent}%")
 
     def _on_zip_created(self, result: LocalZipResult) -> None:
+        self._local_project_dir = result.source_dir
+        self._rerun_viewer.set_project_dir(result.source_dir)
         self._temp_zips.add(result.path)
         for old in list(self._temp_zips):
             if old != result.path:
@@ -919,6 +928,9 @@ class MainWindow(QMainWindow):
         self.deploy_panel.set_zip(path)
         from ..core.util import human_size
 
+        if origin_dir is None:
+            self._local_project_dir = None
+            self._rerun_viewer.set_project_dir(None)
         if origin_dir is not None:
             self._append_log(
                 f"已选择自动打包的 zip：{path.name}（来源文件夹：{origin_dir}，"
@@ -1068,6 +1080,11 @@ class MainWindow(QMainWindow):
         robot = self.manager.current_robot()
         if robot is None:
             return
+        if action == "start":
+            # 运行 start.sh 前先在本机打开 rerun 查看器（gRPC 9876），
+            # 这样机器人通过 rerunLog.server_ip 发来的数据可以直接显示。
+            self._rerun_viewer.set_project_dir(self._local_project_dir)
+            self._rerun_viewer.ensure_started(self._append_log)
         self._proc_busy = True
         self._apply_state()
 
