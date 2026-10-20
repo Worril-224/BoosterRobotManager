@@ -31,3 +31,4 @@ dist-windows/
 
 # 本地 rerun 查看器（体积较大，按需放置，不提交）
 rerun-0.20.3/
+rerun-cli-*.exe

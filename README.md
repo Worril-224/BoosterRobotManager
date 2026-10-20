@@ -21,7 +21,7 @@
 | R6 | 解压与项目目录 | 自动识别唯一顶层目录，避免 `xxx/xxx/` 双重嵌套 |
 | R7 | 编译 | 定位 `scripts/build.sh`，编译阶段同时给 `stop.sh` 授权；实时流式回显输出；**部署面板单独显示编译进度（百分比 / 已完成包数 / 输出行数 / 耗时）**，并显示退出码 |
 | R8 | 启停控制 | 启动 / 停止 / 刷新状态；启动时自动输入密码（sudo / systemctl）；停止优先执行项目 `scripts/stop.sh`；按项目进程识别一次性启动脚本；查看 start.log 末尾 200 行；**实时监视 brain.log（tail -f，窗口随日志帧自动调整大小）** |
-| R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 IP（只改 zip 内副本）；启动 start.sh 前自动打开工程目录下的 `rerun-0.20.3` 查看器 |
+| R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 IP（只改 zip 内副本）；启动 start.sh 前自动打开 `rerun-0.20.3` 或根目录下的 Windows `rerun-cli-*.exe` 查看器 |
 
 界面中所有耗时操作（连接、上传、编译、启停、文件读写）都在 `QThread` 中执行，不会阻塞界面。
 
@@ -62,7 +62,7 @@ Windows 下把 `.venv/bin/python` 换成 `.venv\Scripts\python` 即可；也可�
 
 ### Windows 便携版（.exe，无需安装 Python）
 
-Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 git 仓库，避免仓库过大）：
+Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 git 仓库，避免仓库过大）。v1.1.1 起包内已内置 Windows 版 `rerun-cli-0.20.0-x86_64-pc-windows-msvc.exe`，点击启动时会自动打开查看器：
 
 - 下载页面：<https://github.com/Worril-224/BoosterRobotManager/releases/latest>
 - 资产文件：`BoosterRobotManager-Windows-x64.zip` 和 `BoosterRobotManager-Windows-x64.zip.sha256`
@@ -253,7 +253,7 @@ BoosterRobotManager/
    - 文件夹打包前查找 `<工程>/src/brain/config/config.yaml`；
    - 若 `rerunLog.enable_tcp: true`，只把 **zip 内**该文件的 `server_ip` 改为本机局域网 IP（本机源文件不动）；本机 IP 优先按到机器人的路由选择，保证机器人可访问；
    - 若 `enable_tcp: false`、没有该配置或拿不到本机 IP，则保持原样并记录日志；
-   - 点击「▶ 启动」时，在工程目录 / BRM 目录 / 当前目录查找 `rerun-0.20.3`，启动其中的 `rerun`（macOS 也支持 `Rerun*.app`）；如果本机 9876 端口已有查看器在监听则跳过，找不到只记日志、不阻塞 start.sh。
+   - 点击「▶ 启动」时，在工程目录 / BRM 目录 / 当前目录查找 `rerun-0.20.3/rerun`（macOS 也支持 `Rerun*.app`），也支持直接放在根目录的 Windows `rerun-cli-*.exe`；如果本机 9876 端口已有查看器在监听则跳过，找不到只记日志、不阻塞 start.sh。
 
 ---
 
@@ -349,7 +349,7 @@ BoosterRobotManager/
 检查工程里是否有 `src/brain/config/config.yaml`，以及其中 `rerunLog.enable_tcp` 是否为 `true`；还要确认本机能获取到局域网 IP（BRM 日志会显示「本机局域网 IP」和修改说明）。`enable_tcp: false` 时按设计不会修改。
 
 **Q17：启动时没有自动打开 rerun-0.20.3？**
-BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`（Windows 为 `rerun.exe`，macOS 兼容 `Rerun*.app`）。找不到只记录日志，不会阻止 start.sh；也可以手动打开查看器。若 9876 端口已有实例在监听，BRM 会跳过重复启动。
+BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`（Windows 为 `rerun.exe`，macOS 兼容 `Rerun*.app`），也支持直接放在根目录的 Windows `rerun-cli-*.exe`（v1.1.1 Windows 包已内置）。找不到只记录日志，不会阻止 start.sh；也可以手动打开查看器。若 9876 端口已有实例在监听，BRM 会跳过重复启动。
 
 **Q18：选择文件夹后为什么还要等一会儿？**
 选择或拖入文件夹时，程序会先在本地用 Python 标准库把它压缩成 zip（进度条显示「正在压缩 xx%」），压缩完成后才上传。zip 内会保留顶层文件夹，并自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录；临时 zip 保存在 `brm/temp/`，程序退出时自动清理。

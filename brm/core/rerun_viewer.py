@@ -33,15 +33,22 @@ class RerunViewerLauncher:
 
     # ------------------------------------------------------------------
     def _candidate_dirs(self) -> List[Path]:
-        dirs: List[Path] = []
+        bases: List[Path] = []
         if self._project_dir is not None:
-            dirs.append(self._project_dir / RERUN_DIR_NAME)
-        dirs.extend(self._extra_dirs)
+            bases.append(self._project_dir)
+        bases.extend(self._extra_dirs)
         # 源码运行 / macOS 时：BoosterRobotManager/rerun-0.20.3
-        dirs.append(constants.APP_ROOT.parent / RERUN_DIR_NAME)
-        # 打包后的 Windows 目录：可执行文件所在目录/rerun-0.20.3
-        dirs.append(constants.APP_ROOT / RERUN_DIR_NAME)
-        dirs.append(Path.cwd() / RERUN_DIR_NAME)
+        bases.append(constants.APP_ROOT.parent)
+        # 打包后的 Windows 目录：可执行文件所在目录
+        bases.append(constants.APP_ROOT)
+        bases.append(Path.cwd())
+
+        dirs: List[Path] = []
+        for base in bases:
+            # 子目录形式：rerun-0.20.3/rerun(.exe)
+            dirs.append(base / RERUN_DIR_NAME)
+            # 用户直接把 rerun-cli-*.exe 放到 BRM / 工程根目录的情况
+            dirs.append(base)
 
         unique: List[Path] = []
         seen = set()
@@ -59,15 +66,33 @@ class RerunViewerLauncher:
 
     @staticmethod
     def _find_launch_target(directory: Path) -> Optional[Path]:
-        names = ["rerun.exe", "rerun"] if sys.platform == "win32" else ["rerun", "rerun.exe"]
-        for name in names:
-            candidate = directory / name
-            if candidate.is_file():
-                return candidate
-        # macOS 本地封装的 .app
-        for app in sorted(directory.glob("Rerun*.app")):
-            if app.is_dir():
-                return app
+        if directory.name == RERUN_DIR_NAME:
+            names = (
+                ["rerun.exe", "rerun"]
+                if sys.platform == "win32"
+                else ["rerun", "rerun.exe"]
+            )
+            for name in names:
+                candidate = directory / name
+                if candidate.is_file():
+                    return candidate
+            # macOS 本地封装的 .app
+            for app in sorted(directory.glob("Rerun*.app")):
+                if app.is_dir():
+                    return app
+            return None
+
+        # 根目录下直接放置的 Windows rerun-cli-*.exe
+        if sys.platform == "win32":
+            patterns = [
+                "rerun-cli-*windows*.exe",
+                "rerun-cli-*.exe",
+                "rerun*.exe",
+            ]
+            for pattern in patterns:
+                for candidate in sorted(directory.glob(pattern)):
+                    if candidate.is_file():
+                        return candidate
         return None
 
     @staticmethod
