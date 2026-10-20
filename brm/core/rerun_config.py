@@ -44,6 +44,9 @@ _SERVER_RE = re.compile(
 )
 _TRUE_VALUES = {"true", "yes", "on", "1"}
 
+# rerun TCP/gRPC 默认端口；server_ip 会写成 "<本机IP>:<端口>"
+RERUN_SERVER_PORT = 9876
+
 
 @dataclass
 class RerunConfigUpdate:
@@ -118,12 +121,29 @@ def _find_blocks(lines: List[str]) -> List[Tuple[int, int, int]]:
     return blocks
 
 
+def _format_endpoint(ip: str, old_value: str) -> str:
+    """组成 ``ip:port``；原值已有端口则沿用，否则默认 9876。"""
+    port = str(RERUN_SERVER_PORT)
+    value = (old_value or "").strip()
+    if value.startswith("[") and "]:" in value:
+        tail = value.rsplit(":", 1)[1].strip()
+        if tail.isdigit():
+            port = tail
+    elif value.count(":") == 1:
+        host, tail = value.rsplit(":", 1)
+        if host.strip() and tail.strip().isdigit():
+            port = tail.strip()
+    host = f"[{ip}]" if ":" in ip else ip
+    return f"{host}:{port}"
+
+
 def update_server_ip(
     text: str, new_ip: str
 ) -> Tuple[str, bool, bool, List[str]]:
-    """把 rerunLog.enable_tcp=true 的 server_ip 改为 ``new_ip``。
+    """把 rerunLog.enable_tcp=true 的 server_ip 改为 ``new_ip:端口``。
 
-    返回 (新文本, 是否发现启用项, 是否修改, 旧 IP 列表)。
+    原 server_ip 若已带端口则沿用原端口，否则使用默认 9876。
+    返回 (新文本, 是否发现启用项, 是否修改, 旧地址列表)。
     """
     if not new_ip:
         return text, False, False, []
@@ -160,7 +180,8 @@ def update_server_ip(
 
         if server_index is None:
             newline = "\r\n" if lines[block_start].endswith("\r\n") else "\n"
-            insertion = f"{enable_indent}server_ip: {new_ip}{newline}"
+            address = _format_endpoint(new_ip, "")
+            insertion = f"{enable_indent}server_ip: {address}{newline}"
             insert_at = (enable_index if enable_index is not None else block_start) + 1
             lines.insert(insert_at, insertion)
             changed_any = True
@@ -172,7 +193,8 @@ def update_server_ip(
             continue
         old_value = _clean_value(match.group(2))
         old_ips.append(old_value)
-        if old_value == new_ip:
+        new_value = _format_endpoint(new_ip, old_value)
+        if old_value == new_value:
             continue
         prefix = match.group(1) + "server_ip: "
         comment = match.group(3) or ""
@@ -181,7 +203,7 @@ def update_server_ip(
         stripped = match.group(2).strip()
         if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in "\"'":
             quote = stripped[0]
-        lines[server_index] = f"{prefix}{quote}{new_ip}{quote}{comment}{newline}"
+        lines[server_index] = f"{prefix}{quote}{new_value}{quote}{comment}{newline}"
         changed_any = True
 
     return "".join(lines), enabled_any, changed_any, old_ips
@@ -226,13 +248,15 @@ def prepare_zip_overrides(
         return {}, update
 
     if not changed:
+        address = _format_endpoint(local_ip, update.old_ip)
         update.message = (
-            f"rerunLog.enable_tcp=true，server_ip 已是本机 IP（{local_ip}），无需修改。"
+            f"rerunLog.enable_tcp=true，server_ip 已是本机地址（{address}），无需修改。"
         )
         return {}, update
 
+    address = _format_endpoint(local_ip, update.old_ip)
     update.message = (
         f"rerunLog.enable_tcp=true，打包时将 server_ip 从 "
-        f"{update.old_ip or '空'} 改为本机 IP {local_ip}（仅修改 zip 内文件）。"
+        f"{update.old_ip or '空'} 改为 {address}（仅修改 zip 内文件）。"
     )
     return {config_path: new_text.encode("utf-8")}, update

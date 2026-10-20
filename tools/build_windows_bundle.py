@@ -126,6 +126,7 @@ README_WINDOWS = """Booster 机器人管理器（Windows 便携版）
 - brm\\config\\robots.json  机器人配置（密码 Base64 混淆存储，非加密）
 - brm\\logs\\               部署日志
 - BoosterRobotManager-Console.bat  控制台启动方式（排查问题时使用）
+- rerun-cli-*-windows-*.exe        Windows 版 rerun 查看器（点击启动时自动打开）
 
 【常见问题】
 1. Windows 提示"已保护你的电脑"/"未知发布者"：
@@ -191,7 +192,7 @@ def prepare_stage() -> None:
     shutil.copytree(
         PROJECT_ROOT / "brm",
         STAGE_DIR / "brm",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "logs"),
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "logs", "temp"),
     )
     (STAGE_DIR / "brm" / "logs").mkdir(parents=True, exist_ok=True)
     (STAGE_DIR / "brm" / "logs" / "说明.txt").write_text(
@@ -219,6 +220,11 @@ def prepare_stage() -> None:
         "python312.zip\n.\nLib\\site-packages\n..\nimport site\n",
         encoding="utf-8",
     )
+
+    # 把 Windows 版 rerun 一起打进便携包（放在工程根目录时）
+    for rerun_exe in sorted(PROJECT_ROOT.glob("rerun-cli-*windows*.exe")):
+        shutil.copy2(rerun_exe, STAGE_DIR / rerun_exe.name)
+        print(f"打包 Windows rerun：{rerun_exe.name}")
 
     (STAGE_DIR / "README-Windows.txt").write_text(README_WINDOWS, encoding="utf-8")
     (STAGE_DIR / "BoosterRobotManager-Console.bat").write_text(

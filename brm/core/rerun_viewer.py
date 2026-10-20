@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 
 from .. import constants
+from .rerun_config import RERUN_SERVER_PORT
 
 RERUN_DIR_NAME = "rerun-0.20.3"
-RERUN_GRPC_PORT = 9876
+RERUN_GRPC_PORT = RERUN_SERVER_PORT
 RERUN_READY_TIMEOUT = 30.0
 
 
