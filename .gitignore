@@ -25,3 +25,6 @@ brm/temp/
 
 # 机器人配置包含用户密码/机器人列表，不纳入版本控制（程序首次启动会自动创建）
 brm/config/robots.json
+
+# Windows 便携包通过 GitHub Releases 发布，不再提交到仓库
+dist-windows/

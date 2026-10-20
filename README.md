@@ -61,10 +61,10 @@ Windows 下把 `.venv/bin/python` 换成 `.venv\Scripts\python` 即可；也可�
 
 ### Windows 便携版（.exe，无需安装 Python）
 
-项目已提供 Windows 免安装便携包（在 macOS 上交叉构建）：
+Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 git 仓库，避免仓库过大）：
 
-- `dist-windows/BoosterRobotManager-Windows-x64.zip`
-- 校验文件：`dist-windows/BoosterRobotManager-Windows-x64.zip.sha256`
+- 下载页面：<https://github.com/Worril-224/BoosterRobotManager/releases/latest>
+- 资产文件：`BoosterRobotManager-Windows-x64.zip` 和 `BoosterRobotManager-Windows-x64.zip.sha256`
 
 使用方式：
 
@@ -77,7 +77,8 @@ Windows 下把 `.venv/bin/python` 换成 `.venv\Scripts\python` 即可；也可�
 - 程序未签名，Windows 可能提示"已保护你的电脑"：点「更多信息 → 仍要运行」，或右键 exe → 属性 → 解除锁定；
 - 双击无反应 / 想查看报错：运行同目录的 `BoosterRobotManager-Console.bat`；
 - 配置和日志分别在 `brm\config\robots.json`、`brm\logs\`；
-- 若提示缺少 DLL，请安装「Microsoft Visual C++ 2015-2022 运行库（x64）」。
+- 若提示缺少 DLL，请安装「Microsoft Visual C++ 2015-2022 运行库（x64）」；
+- 本地重新构建 Windows 包：`.venv/bin/python tools/build_windows_bundle.py`（需 `pip install ziglang`），产物在 `dist-windows/`，发布时上传到 Releases。
 
 重新构建（在 macOS / Linux 上交叉构建）：
 
@@ -171,7 +172,7 @@ BoosterRobotManager/
 │   ├── app_icon.ico             # Windows 启动器图标
 │   └── build_launcher.py        # 生成 .app / .command 启动器
 ├── screenshots/                 # README / 报告用截图
-├── dist-windows/                # Windows 便携版 zip（交叉构建产物）
+├── dist-windows/                # 本地交叉构建输出（不提交，发布到 GitHub Releases）
 ├── Booster机器人管理器.app       # macOS 双击启动（由 build_launcher.py 生成）
 ├── 启动 Booster 机器人管理器.command  # macOS 终端启动器
 ├── run.py                       # 源码运行 / PyInstaller 打包入口
