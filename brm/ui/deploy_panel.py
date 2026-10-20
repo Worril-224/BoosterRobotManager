@@ -5,12 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
@@ -59,23 +60,22 @@ class DeployPanel(QWidget):
         self._zip_edit = QLineEdit()
         self._zip_edit.setReadOnly(True)
         self._zip_edit.setPlaceholderText("尚未选择 zip 文件")
-        self._choose_button = QPushButton("选择 zip…")
-        self._choose_button.clicked.connect(self.choose_zip_requested.emit)
+        self._choose_button = QPushButton("选择上传内容 ▾")
+        self._choose_button.setToolTip("点击后主动选择：上传 zip 文件，或上传文件夹（自动打包）")
+        self._choose_button.clicked.connect(self._show_choose_menu)
         zip_row.addWidget(self._zip_edit, 1)
         zip_row.addWidget(self._choose_button)
         layout.addLayout(zip_row)
 
-        folder_row = QHBoxLayout()
-        self._choose_folder_button = QPushButton("选择文件夹（自动打包为 zip）…")
-        self._choose_folder_button.setObjectName("FlatButton")
-        self._choose_folder_button.clicked.connect(self.choose_folder_requested.emit)
-        folder_row.addWidget(self._choose_folder_button)
-        folder_row.addStretch(1)
-        layout.addLayout(folder_row)
+        self._choose_menu = QMenu(self)
+        zip_action = self._choose_menu.addAction("选择 zip 文件…")
+        zip_action.triggered.connect(lambda _checked=False: self.choose_zip_requested.emit())
+        folder_action = self._choose_menu.addAction("选择文件夹（自动打包为 zip）…")
+        folder_action.triggered.connect(lambda _checked=False: self.choose_folder_requested.emit())
 
         hint = QLabel(
-            "只接受 .zip；也可以选择文件夹，程序会先自动打包为 zip 再上传。"
-            "支持把 zip 或文件夹直接拖到窗口。"
+            "点击「选择上传内容」后可主动选择上传 zip 或文件夹（文件夹会先自动打包）。"
+            "也支持把 zip / 文件夹直接拖到窗口。"
         )
         hint.setObjectName("MutedLabel")
         hint.setWordWrap(True)
@@ -195,6 +195,13 @@ class DeployPanel(QWidget):
         self._connected = connected
         self._update_buttons()
 
+    def _show_choose_menu(self) -> None:
+        """在按钮下方弹出「zip / 文件夹」选择菜单。"""
+        position = self._choose_button.mapToGlobal(
+            QPoint(0, self._choose_button.height())
+        )
+        self._choose_menu.popup(position)
+
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
         self._update_buttons()
@@ -240,7 +247,6 @@ class DeployPanel(QWidget):
         idle = not self._busy and not self._zipping
         ready = self._connected and idle
         self._choose_button.setEnabled(idle)
-        self._choose_folder_button.setEnabled(idle)
         self._deploy_button.setEnabled(bool(self._zip_path) and ready)
         self._browse_project_button.setEnabled(ready)
         has_project = bool(self._project_dir)
