@@ -39,6 +39,7 @@ from ..core.session_manager import SessionManager
 from ..core.util import normalize_remote_dir, posix_join, strip_trailing_slash
 from ..core.zipguard import inspect_zip
 from .brain_log_monitor import BrainLogMonitorDialog
+from .field_monitor import FieldMonitorDialog
 from .deploy_panel import DeployPanel
 from .file_browser import FileBrowserPanel, TextPreviewDialog
 from .password_dialog import PasswordDialog
@@ -127,6 +128,7 @@ class MainWindow(QMainWindow):
         self._pending_deploy: Optional[Path] = None
         self._tail_dialog: Optional[ServiceLogDialog] = None
         self._brain_monitor: Optional[BrainLogMonitorDialog] = None
+        self._field_monitor: Optional[FieldMonitorDialog] = None
         self._local_project_dir: Optional[Path] = None
         self._rerun_viewer = RerunViewerLauncher()
         self._temp_zips: Set[Path] = set()
@@ -208,6 +210,7 @@ class MainWindow(QMainWindow):
         self.deploy_panel.status_requested.connect(lambda: self._proc_action("status"))
         self.deploy_panel.view_log_requested.connect(self._view_start_log)
         self.deploy_panel.monitor_brain_requested.connect(self._monitor_brain)
+        self.deploy_panel.field_monitor_requested.connect(self._monitor_field)
         self.deploy_panel.browse_project_requested.connect(self._browse_project)
 
     def _build_topbar(self) -> QHBoxLayout:
@@ -612,6 +615,12 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._brain_monitor = None
+        if self._field_monitor is not None:
+            try:
+                self._field_monitor.close()
+            except Exception:
+                pass
+            self._field_monitor = None
         name = self.manager.robot_name
         was_connected = self.manager.connected or name is not None
         self.manager.disconnect()
@@ -1254,6 +1263,51 @@ class MainWindow(QMainWindow):
             self._brain_monitor = None
 
     # ------------------------------------------------------------------
+    # 足球地图监视（解析 brain.log 后按 kid_size 比例绘制）
+    # ------------------------------------------------------------------
+    def _monitor_field(self) -> None:
+        if not self.manager.connected:
+            QMessageBox.warning(self, "未连接", "请先连接机器人。")
+            return
+        context = self._project
+        if context is None:
+            QMessageBox.information(
+                self,
+                "请先选择项目",
+                "请先完成一次部署，或点击「选择 Workspace 里的已有项目…」。",
+            )
+            return
+        try:
+            session = self.manager.session()
+        except BrmError as exc:
+            QMessageBox.warning(self, exc.title, exc.user_message())
+            return
+
+        remote_path = posix_join(context.project_dir, "brain.log")
+        if self._field_monitor is not None:
+            try:
+                self._field_monitor.close()
+            except Exception:
+                pass
+            self._field_monitor = None
+
+        robot = self.manager.current_robot()
+        name = robot.name if robot is not None else context.project_name
+        dialog = FieldMonitorDialog(session, remote_path, name, self)
+        self._field_monitor = dialog
+        dialog.finished.connect(
+            lambda _result, d=dialog: self._clear_field_monitor(d)
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._append_log(f"打开足球地图监视：{remote_path}")
+
+    def _clear_field_monitor(self, dialog: FieldMonitorDialog) -> None:
+        if self._field_monitor is dialog:
+            self._field_monitor = None
+
+    # ------------------------------------------------------------------
     # 启动日志查看
     # ------------------------------------------------------------------
     def _view_start_log(self) -> None:
@@ -1383,6 +1437,12 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._brain_monitor = None
+        if self._field_monitor is not None:
+            try:
+                self._field_monitor.close()
+            except Exception:
+                pass
+            self._field_monitor = None
 
         for worker in list(self._workers):
             worker.cancel()

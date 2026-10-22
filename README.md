@@ -22,6 +22,7 @@
 | R7 | 编译 | 定位 `scripts/build.sh`，编译阶段同时给 `stop.sh` 授权；实时流式回显输出；**部署面板单独显示编译进度（百分比 / 已完成包数 / 输出行数 / 耗时）**，并显示退出码 |
 | R8 | 启停控制 | 启动 / 停止 / 刷新状态；启动时自动输入密码（sudo / systemctl）；停止优先执行项目 `scripts/stop.sh`；按项目进程识别一次性启动脚本；查看 start.log 末尾 200 行；**实时监视 brain.log（tail -f，窗口随日志帧自动调整大小）** |
 | R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 **IP:9876**（原值已有端口则沿用；只改 zip 内副本）；启动 start.sh 前自动打开 `rerun-0.20.3` / Windows `rerun-cli-*.exe`，并等待其监听 9876 后再运行 start.sh |
+| R10 | 足球地图监视 | 解析 brain.log 的 `FIELD_POSE` 与 `[BALL]` 行，按 kid_size（9×6 m）真实比例绘制机器人位置/朝向与球位置；多机器人用不同颜色区分，画布与窗口预留多路数据源接口 |
 
 界面中所有耗时操作（连接、上传、编译、启停、文件读写）都在 `QThread` 中执行，不会阻塞界面。
 
@@ -121,7 +122,8 @@ Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 gi
    上传完成后进度区会切换到 **编译进度**（百分比 / 包数 / 输出行数 / 耗时），编译结束后保留最终结果。
 5. 编译成功后点击 **▶ 启动**；用 **刷新状态**、**查看启动日志**、**■ 停止** 管理服务。
 6. 启动后可点击 **「监视 brain.log」**，弹窗会实时执行 `tail -f <项目目录>/brain.log`；日志持续输出时窗口大小保持稳定、不会闪烁；日志停顿约 0.7 秒后才会按最新一帧自动适配一次（可取消勾选后手动调整）。
-7. 如果工程使用 rerun：打包时会自动把 `<工程>/src/brain/config/config.yaml` 中 `rerunLog.enable_tcp: true` 的 `server_ip` 改成本机 IP:9876（原值带端口则沿用原端口）；点击启动时会先自动打开 `rerun-0.20.3` 查看器，**等待其监听 9876 后才运行 start.sh**（最多等 30 秒；未放置 rerun 则跳过等待直接启动）。
+7. 启动后点击 **「足球地图」**：弹窗实时解析 brain.log 中的 `FIELD_POSE`（机器人 x/y/θ）和 `[BALL] fld=(x,y)`，按 kid_size 9×6 m 比例绘制足球场；机器人用不同颜色三角形表示（带朝向），球用黄色圆点表示。多台机器人时每台一个颜色，窗口的 `add_source()` 预留了多路 brain.log 接入。
+8. 如果工程使用 rerun：打包时会自动把 `<工程>/src/brain/config/config.yaml` 中 `rerunLog.enable_tcp: true` 的 `server_ip` 改成本机 IP:9876（原值带端口则沿用原端口）；点击启动时会先自动打开 `rerun-0.20.3` 查看器，**等待其监听 9876 后才运行 start.sh**（最多等 30 秒；未放置 rerun 则跳过等待直接启动）。
 
 > 重新打开程序后无需再次输入密码：密码已持久化，连接时自动复用。
 
@@ -146,6 +148,8 @@ BoosterRobotManager/
 │   │   ├── deployer.py          # 9 阶段部署流水线
 │   │   ├── build_progress.py    # 解析编译输出进度（cmake/ninja/colcon）
 │   │   ├── local_zip.py         # 选择文件夹时本地自动打包 zip
+│   │   ├── brain_log_parser.py  # 解析 brain.log 的 FIELD_POSE / [BALL]
+│   │   ├── field_geometry.py    # kid_size 场地尺寸
 │   │   ├── rerun_config.py      # 打包前改写 rerunLog server_ip
 │   │   ├── rerun_viewer.py      # 启动 start.sh 前打开 rerun 查看器
 │   │   ├── proc_control.py      # start.sh 启动 / 停止 / 状态 / 日志
@@ -155,6 +159,7 @@ BoosterRobotManager/
 │   ├── ui/
 │   │   ├── main_window.py       # 主窗口
 │   │   ├── brain_log_monitor.py # brain.log 实时监视窗口（tail -f）
+│   │   ├── field_monitor.py     # brain.log → 足球地图监视窗口
 │   │   ├── file_browser.py      # 文件浏览面板 / 文本预览
 │   │   ├── deploy_panel.py      # 部署 + 服务控制面板
 │   │   ├── password_dialog.py   # 密码设置 / 重输
@@ -341,6 +346,11 @@ BoosterRobotManager/
 **Q13：start.sh 跑完就退出了，BRM 一直显示「未运行」或停止失败？**
 这类工程通常是「一次性启动脚本」：start.sh 拉起 vision / brain / game_controller 等后台节点后自己退出，PID 文件自然失效。BRM 现在会按「工作目录在项目下的进程」判断状态（显示「运行中（检测到 N 个项目进程）」），停止时优先执行项目的 `scripts/stop.sh`。若项目没有 `stop.sh`，BRM 无法判断要停哪些节点，建议补一个。
 
+10. **足球地图（R10）**：解析 brain.log 中以下两种行（自动去除 ANSI 颜色与 `[brain_node-1]` 前缀）：
+    - `FIELD_POSE:` 后的 `x: ... m  y: ... m  theta: ... rad ... Calibrated: YES/NO`；
+    - `[BALL] fld=(x,y) ... c=... det=Y/N knw=Y/N`。
+    场地按 kid_size 绘制：长 9 m、宽 6 m、球门宽 2.6 m、中圈半径 0.75 m、禁区 2×5 m、球门区 1×3 m；坐标原点在场地中心，x 沿场地长度方向，y 沿宽度方向。每台机器人使用独立颜色，球为黄色实心点并用机器人同色描边；`FieldMonitorDialog.add_source()` 支持后续同时接入多台机器人的 brain.log。
+
 **Q14：怎么选择上传文件夹而不是 zip？**
 点击部署面板的「选择上传内容 ▾」，在菜单里选「选择文件夹（自动打包为 zip）…」即可；也可以直接把文件夹拖进窗口。选「选择 zip 文件…」则和以前一样直接选择 .zip。
 
@@ -355,6 +365,12 @@ BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`
 
 **Q18：选择文件夹后为什么还要等一会儿？**
 选择或拖入文件夹时，程序会先在本地用 Python 标准库把它压缩成 zip（进度条显示「正在压缩 xx%」），压缩完成后才上传。zip 内会保留顶层文件夹，并自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录；临时 zip 保存在 `brm/temp/`，程序退出时自动清理。
+
+**Q19：足球地图里没有机器人/球？**
+确认 `brain.log` 里存在 `FIELD_POSE` 与 `[BALL]` 行；刚启动、尚未定位时 `Calibrated: NO` 也会显示。若日志目录不对或 brain 节点未运行，窗口底部会一直显示「等待 FIELD_POSE」。
+
+**Q20：多台机器人怎么同时看？**
+当前界面按钮打开的是当前机器人一路 brain.log；窗口已提供 `add_source(name, session, remote_path)` 接口，后续可以传入其它机器人的 SSH 会话与 brain.log 路径，画布会按颜色区分并保留各自轨迹。
 
 ---
 
