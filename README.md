@@ -376,14 +376,14 @@ BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`
 **Q18：选择文件夹后为什么还要等一会儿？**
 选择或拖入文件夹时，程序会先在本地用 Python 标准库把它压缩成 zip（进度条显示「正在压缩 xx%」），压缩完成后才上传。zip 内会保留顶层文件夹，并自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录；临时 zip 保存在 `brm/temp/`，程序退出时自动清理。
 
-**Q21：上传前改了 Team ID / 球员编号没有生效？**
-确认勾选的是「上传前修改 Team ID / 球员编号」，且压缩包内存在 `src/brain/config/config.yaml` 并包含 `team_id` / `player_id`。如果项目使用其它配置文件，BRM 会提示找不到并中止上传；可关闭开关后先原样上传，再手动修改配置。
-
 **Q19：足球地图里没有机器人/球？**
 确认 `brain.log` 里存在 `FIELD_POSE` 与 `[BALL]` 行；刚启动、尚未定位时 `Calibrated: NO` 也会显示。若日志目录不对或 brain 节点未运行，窗口底部会一直显示「等待 FIELD_POSE」。
 
 **Q20：多台机器人怎么同时看？**
 当前界面按钮打开的是当前机器人一路 brain.log；窗口已提供 `add_source(name, session, remote_path)` 接口，后续可以传入其它机器人的 SSH 会话与 brain.log 路径，画布会按颜色区分并保留各自轨迹。
+
+**Q21：上传前改了 Team ID / 球员编号没有生效？**
+确认勾选的是「上传前修改 Team ID / 球员编号」，且压缩包内存在 `src/brain/config/config.yaml` 并包含 `team_id` / `player_id`。如果项目使用其它配置文件，BRM 会提示找不到并中止上传；可关闭开关后先原样上传，再手动修改配置。
 
 ---
 
