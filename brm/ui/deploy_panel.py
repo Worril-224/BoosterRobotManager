@@ -7,6 +7,7 @@ from typing import Optional
 
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -74,6 +76,38 @@ class DeployPanel(QWidget):
         zip_action.triggered.connect(lambda _checked=False: self.choose_zip_requested.emit())
         folder_action = self._choose_menu.addAction("选择文件夹（自动打包为 zip）…")
         folder_action.triggered.connect(lambda _checked=False: self.choose_folder_requested.emit())
+
+        # 上传前修改 team_id / player_id（与上传入口放在一起）
+        self._identity_check = QCheckBox("上传前修改 Team ID / 球员编号")
+        self._identity_check.setToolTip(
+            "开启后，上传前会把 zip 内 config.yaml 的 team_id、player_id "
+            "改为下面指定的值（只改上传包，不改本地源文件）。"
+        )
+        self._identity_check.toggled.connect(self._on_identity_toggled)
+        layout.addWidget(self._identity_check)
+
+        identity_row = QHBoxLayout()
+        identity_row.setSpacing(6)
+        team_label = QLabel("Team ID")
+        team_label.setObjectName("MutedLabel")
+        self._team_spin = QSpinBox()
+        self._team_spin.setRange(0, 9999)
+        self._team_spin.setValue(14)
+        self._team_spin.setToolTip("队伍编号，必须与裁判机分配一致")
+        player_label = QLabel("球员编号")
+        player_label.setObjectName("MutedLabel")
+        self._player_spin = QSpinBox()
+        self._player_spin.setRange(1, 99)
+        self._player_spin.setValue(3)
+        self._player_spin.setToolTip("本机角色编号，同队不能重复")
+        identity_row.addWidget(team_label)
+        identity_row.addWidget(self._team_spin)
+        identity_row.addSpacing(12)
+        identity_row.addWidget(player_label)
+        identity_row.addWidget(self._player_spin)
+        identity_row.addStretch(1)
+        layout.addLayout(identity_row)
+        self._on_identity_toggled(False)
 
         hint = QLabel(
             "点击「选择上传内容」后可主动选择上传 zip 或文件夹（文件夹会先自动打包）。"
@@ -195,6 +229,19 @@ class DeployPanel(QWidget):
         layout.addLayout(monitor_row)
 
         return group
+
+    # ------------------------------------------------------------------
+    # 上传前身份替换
+    # ------------------------------------------------------------------
+    def _on_identity_toggled(self, enabled: bool) -> None:
+        self._team_spin.setEnabled(enabled)
+        self._player_spin.setEnabled(enabled)
+
+    def identity_settings(self) -> Optional[tuple[int, int]]:
+        """返回 (team_id, player_id)；功能未开启时返回 None。"""
+        if not self._identity_check.isChecked():
+            return None
+        return (self._team_spin.value(), self._player_spin.value())
 
     # ------------------------------------------------------------------
     # 状态更新

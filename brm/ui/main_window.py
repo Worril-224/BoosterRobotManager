@@ -1006,6 +1006,7 @@ class MainWindow(QMainWindow):
             path,
             robot.workspace_dir,
             secrets=(password,),
+            identity=self.deploy_panel.identity_settings(),
         )
         self._deploy_worker = worker
         self._track(worker)

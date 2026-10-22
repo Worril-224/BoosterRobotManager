@@ -13,8 +13,10 @@ from typing import List, Optional
 
 from PySide6.QtCore import QThread, Signal
 
+from .. import constants
 from ..core.deployer import DeployResult, Deployer
 from ..core.errors import BrmError
+from ..core.identity_config import rewrite_zip_identity
 from ..core.local_zip import create_zip_from_folder
 from ..core.logbook import DeployLog
 from ..core.proc_control import ProcControl
@@ -212,6 +214,7 @@ class DeployWorker(BaseWorker):
         workspace_dir: str,
         log_dir: Optional[Path] = None,
         secrets: tuple = (),
+        identity: Optional[tuple] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -222,6 +225,7 @@ class DeployWorker(BaseWorker):
         self.workspace_dir = workspace_dir
         self.log_dir = log_dir
         self.secrets = secrets
+        self.identity = identity
 
     def execute(self) -> DeployResult:
         deploy_log = DeployLog(
@@ -230,8 +234,29 @@ class DeployWorker(BaseWorker):
             echo=self.log.emit,
             secrets=self.secrets,
         )
+        zip_path = self.zip_path
+        rewritten: Optional[Path] = None
         try:
-            deploy_log.info(f"开始部署：{self.zip_path.name} → {self.workspace_dir}")
+            if self.identity:
+                team_id, player_id = int(self.identity[0]), int(self.identity[1])
+                update = rewrite_zip_identity(
+                    zip_path, constants.TEMP_DIR, team_id, player_id
+                )
+                deploy_log.info(update.message)
+                if not update.found:
+                    raise BrmError(
+                        "未找到 team_id/player_id，已停止上传。",
+                        hint=(
+                            "请确认压缩包内有 src/brain/config/config.yaml 且包含 "
+                            "team_id、player_id 字段，或关闭「上传前修改 Team ID / 球员编号」。"
+                        ),
+                    )
+                if update.changed:
+                    zip_path = update.path
+                    rewritten = update.path
+                    self.log.emit(f"身份配置已写入：{zip_path.name}")
+
+            deploy_log.info(f"开始部署：{zip_path.name} → {self.workspace_dir}")
             deployer = Deployer(
                 self.session,
                 self.sftp,
@@ -241,12 +266,17 @@ class DeployWorker(BaseWorker):
                 compile_progress=self.compile_progress.emit,
                 cancel_event=self._cancel_event,
             )
-            result = deployer.run(self.zip_path, self.workspace_dir)
+            result = deployer.run(zip_path, self.workspace_dir)
             deploy_log.info(f"本次部署日志已保存：{deploy_log.path}")
             self.deploy_finished.emit(result)
             return result
         finally:
             deploy_log.close()
+            if rewritten is not None:
+                try:
+                    rewritten.unlink()
+                except OSError:
+                    pass
 
 
 class ProcWorker(BaseWorker):
