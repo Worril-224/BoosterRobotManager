@@ -4,7 +4,7 @@
 编译以及 start.sh 服务的启动 / 停止 / 状态查看。
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 APP_NAME = "Booster Robot Manager"
 APP_NAME_CN = "Booster 机器人管理器"

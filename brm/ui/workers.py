@@ -24,6 +24,7 @@ from ..core.rerun_config import prepare_zip_overrides
 from ..core.robots import Robot
 from ..core.scripts import find_script
 from ..core.session_manager import SessionManager
+from ..core.ssh_client import SSHSession
 from ..core.sftp_client import RemoteEntry
 from ..core.util import get_local_ip, quote
 
@@ -339,6 +340,41 @@ class ProcWorker(BaseWorker):
         if self.action == "tail":
             return control.tail_log(self.project_name)
         raise BrmError(f"未知的服务操作：{self.action}")
+
+
+class RobotProbeWorker(BaseWorker):
+    """后台探测一台机器人是否可连接，成功时返回未关闭的 SSHSession。"""
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str = "",
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.host = host
+        self.port = int(port)
+        self.username = username
+        self.password = password
+        self.session: Optional[SSHSession] = None
+
+    def execute(self) -> SSHSession:
+        session = SSHSession(
+            self.host,
+            self.port,
+            self.username,
+            password=self.password,
+            connect_timeout=4,
+            command_timeout=10,
+        )
+        self.session = session
+        session.connect()
+        if self.cancelled:
+            session.close()
+            raise BrmError("连接已取消。")
+        return session
 
 
 class TailLogWorker(BaseWorker):

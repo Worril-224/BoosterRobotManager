@@ -39,7 +39,7 @@ from ..core.session_manager import SessionManager
 from ..core.util import normalize_remote_dir, posix_join, strip_trailing_slash
 from ..core.zipguard import inspect_zip
 from .brain_log_monitor import BrainLogMonitorDialog
-from .field_monitor import FieldMonitorDialog
+from .field_monitor import ROBOT_COLORS, FieldMonitorDialog, RobotEndpoint
 from .deploy_panel import DeployPanel
 from .file_browser import FileBrowserPanel, TextPreviewDialog
 from .password_dialog import PasswordDialog
@@ -1294,7 +1294,30 @@ class MainWindow(QMainWindow):
 
         robot = self.manager.current_robot()
         name = robot.name if robot is not None else context.project_name
-        dialog = FieldMonitorDialog(session, remote_path, name, self)
+        extra_robots = []
+        for index, item in enumerate(self.store.robots):
+            if robot is not None and (
+                item.name == robot.name or item.host == robot.host
+            ):
+                continue
+            extra_robots.append(
+                RobotEndpoint(
+                    name=item.name,
+                    host=item.host,
+                    port=item.port,
+                    username=item.username,
+                    password=self.store.resolve_password(item) or "",
+                    remote_path=remote_path,
+                    color=ROBOT_COLORS[(index + 1) % len(ROBOT_COLORS)],
+                )
+            )
+        if extra_robots:
+            self._append_log(
+                f"足球地图：正在检测 {len(extra_robots)} 台其他机器人连接…"
+            )
+        dialog = FieldMonitorDialog(
+            session, remote_path, name, self, extra_robots=extra_robots
+        )
         self._field_monitor = dialog
         dialog.finished.connect(
             lambda _result, d=dialog: self._clear_field_monitor(d)

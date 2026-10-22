@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from ..core.brain_log_parser import Ball2D, BrainLogParser, Pose2D
 from ..core.errors import BrmError
 from ..core.field_geometry import KID_SIZE, FieldDimensions
-from .workers import TailLogWorker
+from .workers import RobotProbeWorker, TailLogWorker
 
 ROBOT_COLORS = [
     QColor("#4da3ff"),  # 蓝
@@ -59,6 +59,20 @@ class RobotTrack:
 
 
 @dataclass
+class RobotEndpoint:
+    """一台待接入的机器人（用于未来/当前的多机监视）。"""
+
+    name: str
+    host: str
+    port: int
+    username: str
+    password: str
+    remote_path: str
+    color: Optional[QColor] = None
+    session: object = None  # 已连接的会话可直接复用
+
+
+@dataclass
 class DataSource:
     name: str
     remote_path: str
@@ -66,6 +80,7 @@ class DataSource:
     worker: Optional[TailLogWorker] = None
     parser: BrainLogParser = field(default_factory=BrainLogParser)
     connected: bool = False
+    owned_session: object = None
 
 
 class FieldCanvas(QWidget):
@@ -302,8 +317,8 @@ class FieldCanvas(QWidget):
         if track.ball is not None:
             ball_center = self._to_screen(rect, track.ball.x, track.ball.y)
             radius = max(4.0, 0.11 * scale)
-            painter.setPen(QPen(track.color, 2.0))
-            painter.setBrush(BALL_COLOR)
+            painter.setPen(QPen(track.color.lighter(160), 1.5))
+            painter.setBrush(track.color)
             painter.drawEllipse(ball_center, radius, radius)
         painter.restore()
 
@@ -317,6 +332,7 @@ class FieldMonitorDialog(QDialog):
         remote_path: str,
         source_name: str = "",
         parent=None,
+        extra_robots: Optional[List[RobotEndpoint]] = None,
     ) -> None:
         super().__init__(parent)
         self._closed = False
@@ -324,6 +340,9 @@ class FieldMonitorDialog(QDialog):
         self._source_order: List[str] = []
         self._legend_labels: Dict[str, QLabel] = {}
         self._dirty = False
+        self._probe_workers: Dict[str, RobotProbeWorker] = {}
+        self._probe_errors: Dict[str, str] = {}
+        self._owned_sessions: List[object] = []
 
         self.setWindowTitle(
             f"足球地图监视{' - ' + source_name if source_name else ''}"
@@ -350,7 +369,7 @@ class FieldMonitorDialog(QDialog):
         legend_row = QHBoxLayout()
         legend_row.setSpacing(14)
         self._legend_layout = legend_row
-        ball_hint = QLabel("球：黄色实心点（同色描边表示来源机器人）")
+        ball_hint = QLabel("球：实心圆点，颜色与对应机器人相同")
         ball_hint.setObjectName("MutedLabel")
         legend_row.addStretch(1)
         legend_row.addWidget(ball_hint)
@@ -376,7 +395,27 @@ class FieldMonitorDialog(QDialog):
         self._refresh_timer.start()
 
         if session is not None and remote_path:
-            self.add_source(source_name or "robot", session, remote_path)
+            self.add_source(
+                source_name or "robot",
+                session,
+                remote_path,
+                color=ROBOT_COLORS[0],
+            )
+        base_index = 1 if self._sources else 0
+        for offset, endpoint in enumerate(extra_robots or []):
+            color = endpoint.color or ROBOT_COLORS[
+                (base_index + offset) % len(ROBOT_COLORS)
+            ]
+            if endpoint.session is not None:
+                self.add_source(
+                    endpoint.name,
+                    endpoint.session,
+                    endpoint.remote_path,
+                    color=color,
+                    owned_session=endpoint.session,
+                )
+            else:
+                self._probe_robot(endpoint, color)
 
     # ------------------------------------------------------------------
     def add_source(
@@ -385,6 +424,7 @@ class FieldMonitorDialog(QDialog):
         session,
         remote_path: str,
         color: Optional[QColor] = None,
+        owned_session: object = None,
     ) -> str:
         """追加一路 brain.log 数据源（未来多机器人监视的接口）。"""
         base = name or "robot"
@@ -403,9 +443,12 @@ class FieldMonitorDialog(QDialog):
             color=color,
             worker=worker,
             connected=True,
+            owned_session=owned_session,
         )
         self._sources[unique] = source
         self._source_order.append(unique)
+        if owned_session is not None:
+            self._owned_sessions.append(owned_session)
 
         worker.stream_line.connect(lambda line, key=unique: self._on_line(key, line))
         worker.failed.connect(lambda error, key=unique: self._on_worker_failed(key, error))
@@ -421,6 +464,66 @@ class FieldMonitorDialog(QDialog):
         self._legend_layout.insertWidget(max(0, self._legend_layout.count() - 1), legend)
         self._status_label.setText("正在监视…")
         return unique
+
+    # ------------------------------------------------------------------
+    def _probe_robot(self, endpoint: RobotEndpoint, color: QColor) -> None:
+        """后台探测其它机器人，成功则自动接入其 brain.log。"""
+        name = endpoint.name
+        worker = RobotProbeWorker(
+            endpoint.host,
+            endpoint.port,
+            endpoint.username,
+            endpoint.password,
+        )
+        self._probe_workers[name] = worker
+        worker.succeeded.connect(
+            lambda session, ep=endpoint, col=color: self._on_probe_success(ep, session, col)
+        )
+        worker.failed.connect(
+            lambda error, key=name: self._on_probe_failed(key, error)
+        )
+        worker.finished.connect(lambda key=name: self._on_probe_finished(key))
+        worker.start()
+
+    def _on_probe_success(self, endpoint: RobotEndpoint, session, color: QColor) -> None:
+        if self._closed:
+            try:
+                session.close()
+            except Exception:
+                pass
+            return
+        self.add_source(
+            endpoint.name,
+            session,
+            endpoint.remote_path,
+            color=color,
+            owned_session=session,
+        )
+
+    def _on_probe_failed(self, name: str, error: BrmError) -> None:
+        if self._closed:
+            return
+        self._probe_errors[name] = error.user_message()
+        label = QLabel(f"● {name} 连接失败")
+        label.setStyleSheet("color: #ff8a8a;")
+        label.setToolTip(error.user_message())
+        self._legend_labels[name] = label
+        self._legend_layout.insertWidget(
+            max(0, self._legend_layout.count() - 1), label
+        )
+
+    def _on_probe_finished(self, name: str) -> None:
+        worker = self._probe_workers.pop(name, None)
+        if worker is None:
+            return
+        if worker.session is not None:
+            source = self._sources.get(name)
+            if source is None or source.owned_session is not worker.session:
+                try:
+                    worker.session.close()
+                except Exception:
+                    pass
+        worker.deleteLater()
 
     # ------------------------------------------------------------------
     def _on_line(self, name: str, line: str) -> None:
@@ -464,9 +567,25 @@ class FieldMonitorDialog(QDialog):
                 label.setText(f"● {name}  ({pose.x:+.2f}, {pose.y:+.2f}){ball_text}")
         if parts:
             self._stats_label.setText("   |   ".join(parts))
-            self._status_label.setText("监视中")
         else:
             self._stats_label.setText("等待 brain.log 数据…")
+
+        connected = len(self._sources)
+        pending = len(self._probe_workers)
+        failed = len(self._probe_errors)
+        if pending:
+            self._status_label.setText(
+                f"已连接 {connected} 台 · 正在检测 {pending} 台…"
+            )
+            self._status_label.setStyleSheet("color: #8b929c;")
+        elif failed:
+            self._status_label.setText(
+                f"已连接 {connected} 台 · {failed} 台不可连接"
+            )
+            self._status_label.setStyleSheet("color: #ffb86b;")
+        else:
+            self._status_label.setText("监视中")
+            self._status_label.setStyleSheet("color: #8b929c;")
 
     # ------------------------------------------------------------------
     def _on_worker_failed(self, name: str, error: BrmError) -> None:
@@ -497,16 +616,47 @@ class FieldMonitorDialog(QDialog):
     def closeEvent(self, event) -> None:
         self._closed = True
         self._refresh_timer.stop()
-        for source in list(self._sources.values()):
-            worker = source.worker
-            if worker is None:
-                continue
+
+        probe_workers = list(self._probe_workers.values())
+        for worker in probe_workers:
             try:
-                worker.stop()
+                worker.cancel()
             except Exception:
                 pass
-            if not worker.wait(2000):
+        deadline = time.monotonic() + 6.0
+        for worker in probe_workers:
+            remaining = max(1, int((deadline - time.monotonic()) * 1000))
+            if not worker.wait(remaining):
                 worker.terminate()
-                worker.wait(500)
-            source.worker = None
+                worker.wait(300)
+            if worker.session is not None:
+                try:
+                    worker.session.close()
+                except Exception:
+                    pass
+        self._probe_workers.clear()
+
+        for source in list(self._sources.values()):
+            worker = source.worker
+            if worker is not None:
+                try:
+                    worker.stop()
+                except Exception:
+                    pass
+                if not worker.wait(2000):
+                    worker.terminate()
+                    worker.wait(500)
+                source.worker = None
+            if source.owned_session is not None:
+                try:
+                    source.owned_session.close()
+                except Exception:
+                    pass
+
+        for session in self._owned_sessions:
+            try:
+                session.close()
+            except Exception:
+                pass
+        self._owned_sessions.clear()
         super().closeEvent(event)

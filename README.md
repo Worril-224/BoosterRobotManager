@@ -22,7 +22,7 @@
 | R7 | 编译 | 定位 `scripts/build.sh`，编译阶段同时给 `stop.sh` 授权；实时流式回显输出；**部署面板单独显示编译进度（百分比 / 已完成包数 / 输出行数 / 耗时）**，并显示退出码 |
 | R8 | 启停控制 | 启动 / 停止 / 刷新状态；启动时自动输入密码（sudo / systemctl）；停止优先执行项目 `scripts/stop.sh`；按项目进程识别一次性启动脚本；查看 start.log 末尾 200 行；**实时监视 brain.log（tail -f，窗口随日志帧自动调整大小）** |
 | R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 **IP:9876**（原值已有端口则沿用；只改 zip 内副本）；启动 start.sh 前自动打开 `rerun-0.20.3` / Windows `rerun-cli-*.exe`，并等待其监听 9876 后再运行 start.sh |
-| R10 | 足球地图监视 | 解析 brain.log 的 `FIELD_POSE` 与 `[BALL]` 行，按 kid_size（9×6 m）真实比例绘制机器人位置/朝向与球位置；多机器人用不同颜色区分，画布与窗口预留多路数据源接口 |
+| R10 | 足球地图监视 | 打开时自动检测并连接所有可连接的机器人，解析各自 brain.log 的 `FIELD_POSE` 与 `[BALL]`；按 kid_size（9×6 m）真实比例绘制机器人位置/朝向与球位置，机器人及它看到的球使用同一颜色 |
 | R11 | 上传前身份替换 | 上传入口旁可开关；开启后选择 **Team ID / 球员编号**，上传前替换 zip 内所有 `config.yaml` 的 `team_id`、`player_id`（只改上传包，不改本地源文件） |
 
 界面中所有耗时操作（连接、上传、编译、启停、文件读写）都在 `QThread` 中执行，不会阻塞界面。
@@ -125,7 +125,7 @@ Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 gi
 
 5. 编译成功后点击 **▶ 启动**；用 **刷新状态**、**查看启动日志**、**■ 停止** 管理服务。
 6. 启动后可点击 **「监视 brain.log」**，弹窗会实时执行 `tail -f <项目目录>/brain.log`；日志持续输出时窗口大小保持稳定、不会闪烁；日志停顿约 0.7 秒后才会按最新一帧自动适配一次（可取消勾选后手动调整）。
-7. 启动后点击 **「足球地图」**：弹窗实时解析 brain.log 中的 `FIELD_POSE`（机器人 x/y/θ）和 `[BALL] fld=(x,y)`，按 kid_size 9×6 m 比例绘制足球场；机器人用不同颜色三角形表示（带朝向），球用黄色圆点表示。多台机器人时每台一个颜色，窗口的 `add_source()` 预留了多路 brain.log 接入。
+7. 启动后点击 **「足球地图」**：窗口会自动检测所有配置机器人，把可连接的机器人全部接入；分别解析各自 brain.log 中的 `FIELD_POSE`（x/y/θ）和 `[BALL] fld=(x,y)`，按 kid_size 9×6 m 比例绘制足球场。每台机器人一种颜色（三角形带朝向与轨迹），它看到的球用**同色**实心圆点标注。
 8. 如果工程使用 rerun：打包时会自动把 `<工程>/src/brain/config/config.yaml` 中 `rerunLog.enable_tcp: true` 的 `server_ip` 改成本机 IP:9876（原值带端口则沿用原端口）；点击启动时会先自动打开 `rerun-0.20.3` 查看器，**等待其监听 9876 后才运行 start.sh**（最多等 30 秒；未放置 rerun 则跳过等待直接启动）。
 
 > 重新打开程序后无需再次输入密码：密码已持久化，连接时自动复用。
@@ -353,7 +353,7 @@ BoosterRobotManager/
 10. **足球地图（R10）**：解析 brain.log 中以下两种行（自动去除 ANSI 颜色与 `[brain_node-1]` 前缀）：
     - `FIELD_POSE:` 后的 `x: ... m  y: ... m  theta: ... rad ... Calibrated: YES/NO`；
     - `[BALL] fld=(x,y) ... c=... det=Y/N knw=Y/N`。
-    场地按 kid_size 绘制：长 9 m、宽 6 m、球门宽 2.6 m、中圈半径 0.75 m、禁区 2×5 m、球门区 1×3 m；坐标原点在场地中心，x 沿场地长度方向，y 沿宽度方向。每台机器人使用独立颜色，球为黄色实心点并用机器人同色描边；`FieldMonitorDialog.add_source()` 支持后续同时接入多台机器人的 brain.log。
+    场地按 kid_size 绘制：长 9 m、宽 6 m、球门宽 2.6 m、中圈半径 0.75 m、禁区 2×5 m、球门区 1×3 m；坐标原点在场地中心，x 沿场地长度方向，y 沿宽度方向。打开窗口时自动探测所有配置机器人并接入可连接者；每台机器人使用独立颜色，其看到的球用同色实心点显示。`FieldMonitorDialog.add_source()` 仍可用于手动追加数据源。
 
 11. **上传前身份替换（R11）**：部署面板「选择上传内容」下方有开关和两个数字框（Team ID / 球员编号）。开启后，在真正上传前会扫描 zip 内所有 `config.yaml` / `config.yml`：
     - 替换 `team_id:`、`player_id:` 的值（保留缩进、引号和行尾注释）；
@@ -380,7 +380,7 @@ BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`
 确认 `brain.log` 里存在 `FIELD_POSE` 与 `[BALL]` 行；刚启动、尚未定位时 `Calibrated: NO` 也会显示。若日志目录不对或 brain 节点未运行，窗口底部会一直显示「等待 FIELD_POSE」。
 
 **Q20：多台机器人怎么同时看？**
-当前界面按钮打开的是当前机器人一路 brain.log；窗口已提供 `add_source(name, session, remote_path)` 接口，后续可以传入其它机器人的 SSH 会话与 brain.log 路径，画布会按颜色区分并保留各自轨迹。
+点击「足球地图」时会遍历所有已配置机器人，后台检测 SSH 连接；能连上的机器人会自动接入各自 brain.log，窗口顶部显示「已连接 N 台 / 正在检测 / 不可连接」状态。每台机器人使用不同颜色，它的球也用同色圆点。若某台机器人的项目目录与当前项目不同，可在 `FieldMonitorDialog.add_source(name, session, remote_path)` 中手动指定路径。
 
 **Q21：上传前改了 Team ID / 球员编号没有生效？**
 确认勾选的是「上传前修改 Team ID / 球员编号」，且压缩包内存在 `src/brain/config/config.yaml` 并包含 `team_id` / `player_id`。如果项目使用其它配置文件，BRM 会提示找不到并中止上传；可关闭开关后先原样上传，再手动修改配置。
