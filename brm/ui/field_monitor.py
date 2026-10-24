@@ -42,7 +42,6 @@ ROBOT_COLORS = [
     QColor("#ff6b81"),  # 粉
     QColor("#f7d154"),  # 黄
 ]
-BALL_COLOR = QColor("#ffd166")
 FIELD_COLOR = QColor("#14532d")
 FIELD_EDGE = QColor("#e8f5e9")
 BACKGROUND = QColor("#08130d")
@@ -81,6 +80,7 @@ class DataSource:
     parser: BrainLogParser = field(default_factory=BrainLogParser)
     connected: bool = False
     owned_session: object = None
+    team_id: Optional[int] = None
 
 
 class FieldCanvas(QWidget):
@@ -343,6 +343,8 @@ class FieldMonitorDialog(QDialog):
         self._probe_workers: Dict[str, RobotProbeWorker] = {}
         self._probe_errors: Dict[str, str] = {}
         self._owned_sessions: List[object] = []
+        self._reference_team: Optional[int] = None
+        self._reference_name: str = ""
 
         self.setWindowTitle(
             f"足球地图监视{' - ' + source_name if source_name else ''}"
@@ -356,10 +358,14 @@ class FieldMonitorDialog(QDialog):
         header = QHBoxLayout()
         title = QLabel("brain.log → kid_size 足球地图")
         title.setStyleSheet("font-size: 15px; font-weight: 700; color: #f0f3f7;")
+        self._reference_label = QLabel("基准坐标系：等待队伍 ID…")
+        self._reference_label.setObjectName("MutedLabel")
         self._status_label = QLabel("正在连接…")
         self._status_label.setObjectName("MutedLabel")
         header.addWidget(title)
         header.addStretch(1)
+        header.addWidget(self._reference_label)
+        header.addSpacing(12)
         header.addWidget(self._status_label)
         layout.addLayout(header)
 
@@ -369,7 +375,7 @@ class FieldMonitorDialog(QDialog):
         legend_row = QHBoxLayout()
         legend_row.setSpacing(14)
         self._legend_layout = legend_row
-        ball_hint = QLabel("球：实心圆点，颜色与对应机器人相同")
+        ball_hint = QLabel("球：与机器人同色实心点 · 对方队伍坐标已转换到基准坐标系")
         ball_hint.setObjectName("MutedLabel")
         legend_row.addStretch(1)
         legend_row.addWidget(ball_hint)
@@ -532,11 +538,95 @@ class FieldMonitorDialog(QDialog):
         source = self._sources.get(name)
         if source is None:
             return
-        if source.parser.feed(line):
-            self.canvas.update_track(
-                name, source.color, source.parser.pose, source.parser.ball
-            )
+        changed = source.parser.feed(line)
+        team_changed = source.parser.team_id != source.team_id
+        if team_changed:
+            source.team_id = source.parser.team_id
+            if self._recompute_reference():
+                self._update_all_tracks()
+        if changed:
+            self._update_canvas_source(name)
             self._dirty = True
+
+    @staticmethod
+    def _normalize_angle(theta: float) -> float:
+        return math.atan2(math.sin(theta), math.cos(theta))
+
+    def _invert_for(self, source: DataSource) -> bool:
+        """不同队伍的场地坐标系相差 180°（各自以本方半场为 -x）。"""
+        return (
+            self._reference_team is not None
+            and source.team_id is not None
+            and source.team_id != self._reference_team
+        )
+
+    def _transformed_pose(self, source: DataSource):
+        pose = source.parser.pose
+        if pose is None or not self._invert_for(source):
+            return pose
+        return Pose2D(
+            -pose.x,
+            -pose.y,
+            self._normalize_angle(pose.theta + math.pi),
+            pose.calibrated,
+        )
+
+    def _transformed_ball(self, source: DataSource):
+        ball = source.parser.ball
+        if ball is None or not self._invert_for(source):
+            return ball
+        return Ball2D(
+            -ball.x,
+            -ball.y,
+            ball.confidence,
+            ball.detected,
+            ball.known,
+        )
+
+    def _update_canvas_source(self, name: str) -> None:
+        source = self._sources.get(name)
+        if source is None:
+            return
+        self.canvas.update_track(
+            name,
+            source.color,
+            self._transformed_pose(source),
+            self._transformed_ball(source),
+        )
+
+    def _update_all_tracks(self) -> None:
+        for name in self._source_order:
+            self._update_canvas_source(name)
+        self._dirty = True
+
+    def _recompute_reference(self) -> bool:
+        """以最后一个连接的、已返回 TeamID 的机器人作为基准坐标系。"""
+        previous_team = self._reference_team
+        previous_name = self._reference_name
+        for name in reversed(self._source_order):
+            source = self._sources.get(name)
+            if source is not None and source.parser.team_id is not None:
+                self._reference_team = source.parser.team_id
+                self._reference_name = source.name
+                break
+        changed = (
+            self._reference_team != previous_team
+            or self._reference_name != previous_name
+        )
+        if changed:
+            # 基准坐标系变化后旧轨迹属于另一个坐标系，清空避免混淆。
+            self.canvas.clear_trails()
+            self._refresh_reference_label()
+        return changed
+
+    def _refresh_reference_label(self) -> None:
+        if self._reference_team is None:
+            self._reference_label.setText("基准坐标系：等待队伍 ID…")
+        else:
+            self._reference_label.setText(
+                f"基准坐标系：Team {self._reference_team}"
+                f"（最后连接 {self._reference_name}）"
+            )
 
     def _refresh_ui(self) -> None:
         if self._closed:
@@ -564,12 +654,18 @@ class FieldMonitorDialog(QDialog):
                 ball_text = ""
                 if track.ball is not None:
                     ball_text = f"  球=({track.ball.x:+.2f},{track.ball.y:+.2f})"
-                label.setText(f"● {name}  ({pose.x:+.2f}, {pose.y:+.2f}){ball_text}")
+                team_text = (
+                    f" T{source.team_id}" if source.team_id is not None else ""
+                )
+                label.setText(
+                    f"● {name}{team_text}  ({pose.x:+.2f}, {pose.y:+.2f}){ball_text}"
+                )
         if parts:
             self._stats_label.setText("   |   ".join(parts))
         else:
             self._stats_label.setText("等待 brain.log 数据…")
 
+        self._refresh_reference_label()
         connected = len(self._sources)
         pending = len(self._probe_workers)
         failed = len(self._probe_errors)
