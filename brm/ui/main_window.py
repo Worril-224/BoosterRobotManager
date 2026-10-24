@@ -33,6 +33,7 @@ from ..core.local_zip import (
 )
 from ..core.errors import AuthFailedError, BrmError, DeployCancelledError
 from ..core.proc_control import ProcStatus
+from ..core.project_format import LocalProjectFormat, detect_local_project
 from ..core.rerun_viewer import RerunViewerLauncher
 from ..core.robots import Robot, RobotStore
 from ..core.session_manager import SessionManager
@@ -130,6 +131,8 @@ class MainWindow(QMainWindow):
         self._brain_monitor: Optional[BrainLogMonitorDialog] = None
         self._field_monitor: Optional[FieldMonitorDialog] = None
         self._local_project_dir: Optional[Path] = None
+        self._local_format: Optional[LocalProjectFormat] = None
+        self._direct_worker: Optional[BaseWorker] = None
         self._rerun_viewer = RerunViewerLauncher()
         self._temp_zips: Set[Path] = set()
         self._closing = False
@@ -211,6 +214,7 @@ class MainWindow(QMainWindow):
         self.deploy_panel.view_log_requested.connect(self._view_start_log)
         self.deploy_panel.monitor_brain_requested.connect(self._monitor_brain)
         self.deploy_panel.field_monitor_requested.connect(self._monitor_field)
+        self.deploy_panel.direct_start_requested.connect(self._direct_start)
         self.deploy_panel.browse_project_requested.connect(self._browse_project)
 
     def _build_topbar(self) -> QHBoxLayout:
@@ -876,6 +880,21 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "不是文件夹", f"路径不是文件夹：\n{folder}")
             return
 
+        self._local_project_dir = folder
+        self._local_format = detect_local_project(folder)
+        self.deploy_panel.set_direct_start_candidate(
+            self._local_format.valid, self._local_format.name
+        )
+        if self._local_format.valid:
+            self._append_log(
+                f"本地工程格式检测通过：{self._local_format.name}"
+                f"（{self._local_format.summary}），可尝试直接启动已部署工程。"
+            )
+        else:
+            self._append_log(
+                f"本地工程未通过直接启动格式检测：{self._local_format.summary}"
+            )
+
         self._append_log(f"正在压缩文件夹：{folder}")
         self.deploy_panel.set_zipping(True)
         self.deploy_panel.set_progress(0, "正在压缩…")
@@ -939,6 +958,8 @@ class MainWindow(QMainWindow):
 
         if origin_dir is None:
             self._local_project_dir = None
+            self._local_format = None
+            self.deploy_panel.set_direct_start_candidate(False)
             self._rerun_viewer.set_project_dir(None)
         if origin_dir is not None:
             self._append_log(
@@ -1219,6 +1240,91 @@ class MainWindow(QMainWindow):
                 f"{error.user_message()}",
             )
         self._proc_action("status")
+
+    # ------------------------------------------------------------------
+    # 直接启动已部署工程（跳过上传/编译）
+    # ------------------------------------------------------------------
+    def _direct_start(self) -> None:
+        if not self.manager.connected:
+            QMessageBox.warning(self, "未连接", "请先连接机器人。")
+            return
+        fmt = self._local_format
+        if fmt is None:
+            QMessageBox.information(
+                self,
+                "请先选择本地工程",
+                "请先通过「选择上传内容」选择一个工程文件夹，再进行直接启动检测。",
+            )
+            return
+        if not fmt.valid:
+            QMessageBox.warning(
+                self,
+                "工程格式不符",
+                "所选文件夹不符合直接启动格式：\n\n"
+                + "\n".join(f"• {item}" for item in fmt.problems)
+                + "\n\n仍可通过「上传并部署」正常编译启动。",
+            )
+            return
+        if self._direct_worker is not None and self._direct_worker.isRunning():
+            self.statusBar().showMessage("正在检测远端工程，请稍候…", 4000)
+            return
+
+        robot = self.manager.current_robot()
+        if robot is None:
+            return
+        remote_dir = posix_join(robot.workspace_dir, fmt.name)
+        worker = FindScriptWorker(
+            self.manager.session(), self.manager.sftp(), remote_dir, "start.sh"
+        )
+        self._direct_worker = worker
+        self._track(worker)
+        worker.log.connect(self.log_line)
+        worker.succeeded.connect(
+            lambda start_script, name=fmt.name, path=remote_dir: self._on_direct_start_ready(
+                path, name, start_script
+            )
+        )
+        worker.failed.connect(
+            lambda error, path=remote_dir: self._on_direct_start_failed(path, error)
+        )
+        worker.finished.connect(
+            lambda w=worker: self._on_direct_worker_finished(w)
+        )
+        self._append_log(
+            f"本地格式有效，正在检查机器人上的已部署工程：{remote_dir}"
+        )
+        worker.start()
+
+    def _on_direct_start_ready(
+        self, project_dir: str, project_name: str, start_script: str
+    ) -> None:
+        self._project = ProjectContext(
+            project_dir=project_dir,
+            project_name=project_name,
+            start_script=start_script,
+        )
+        self.deploy_panel.set_project(project_dir, project_name)
+        self._status = None
+        self.deploy_panel.set_status(None)
+        self._append_log(
+            f"检测到远端已部署工程：{project_dir}，跳过上传/编译，直接启动。"
+        )
+        self._proc_action("start")
+
+    def _on_direct_start_failed(self, remote_dir: str, error: BrmError) -> None:
+        self._append_log(
+            f"直接启动失败：{remote_dir} 未找到可用的 start.sh（{error.message}）"
+        )
+        QMessageBox.warning(
+            self,
+            "未找到已部署工程",
+            f"机器人上没有找到可启动的同名工程：\n{remote_dir}\n\n"
+            "请先通过「上传并部署」部署一次，之后再使用直接启动。",
+        )
+
+    def _on_direct_worker_finished(self, worker: BaseWorker) -> None:
+        if self._direct_worker is worker:
+            self._direct_worker = None
 
     # ------------------------------------------------------------------
     # brain.log 实时监视

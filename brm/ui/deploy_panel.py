@@ -35,6 +35,7 @@ class DeployPanel(QWidget):
     view_log_requested = Signal()
     monitor_brain_requested = Signal()
     field_monitor_requested = Signal()
+    direct_start_requested = Signal()
     browse_project_requested = Signal()
 
     def __init__(self, parent=None) -> None:
@@ -44,6 +45,7 @@ class DeployPanel(QWidget):
         self._connected = False
         self._busy = False
         self._zipping = False
+        self._direct_start_available = False
         self._status: Optional[ProcStatus] = None
 
         layout = QVBoxLayout(self)
@@ -201,6 +203,14 @@ class DeployPanel(QWidget):
         self._start_button = QPushButton("▶ 启动")
         self._start_button.setObjectName("PrimaryButton")
         self._start_button.clicked.connect(self.start_requested.emit)
+        self._direct_start_button = QPushButton("直接启动")
+        self._direct_start_button.setObjectName("FlatButton")
+        self._direct_start_button.setToolTip(
+            "检测本地工程格式与机器人上已部署的同名工程；若已部署则跳过上传/编译直接启动"
+        )
+        self._direct_start_button.clicked.connect(
+            self.direct_start_requested.emit
+        )
         self._stop_button = QPushButton("■ 停止")
         self._stop_button.setObjectName("DangerButton")
         self._stop_button.clicked.connect(self.stop_requested.emit)
@@ -208,6 +218,7 @@ class DeployPanel(QWidget):
         self._log_button.setObjectName("FlatButton")
         self._log_button.clicked.connect(self.view_log_requested.emit)
         button_row.addWidget(self._start_button)
+        button_row.addWidget(self._direct_start_button)
         button_row.addWidget(self._stop_button)
         button_row.addWidget(self._log_button)
         layout.addLayout(button_row)
@@ -242,6 +253,24 @@ class DeployPanel(QWidget):
         if not self._identity_check.isChecked():
             return None
         return (self._team_spin.value(), self._player_spin.value())
+
+    # ------------------------------------------------------------------
+    # 直接启动检测
+    # ------------------------------------------------------------------
+    def set_direct_start_candidate(self, available: bool, name: str = "") -> None:
+        """设置是否检测到可尝试直接启动的本地工程。"""
+        self._direct_start_available = bool(available)
+        if available:
+            suffix = f"：{name}" if name else ""
+            self._direct_start_button.setToolTip(
+                f"检测到已部署工程格式{suffix}。点击后检查机器人上的同名工程，"
+                "若存在则跳过上传/编译直接启动。"
+            )
+        else:
+            self._direct_start_button.setToolTip(
+                "请先选择一个符合 Booster 工程格式的本地文件夹（含 src/ 和 start.sh）"
+            )
+        self._update_buttons()
 
     # ------------------------------------------------------------------
     # 状态更新
@@ -362,6 +391,9 @@ class DeployPanel(QWidget):
         has_project = bool(self._project_dir)
         running = bool(self._status is not None and self._status.running)
         self._start_button.setEnabled(ready and has_project and not running)
+        self._direct_start_button.setEnabled(
+            ready and self._direct_start_available
+        )
         self._stop_button.setEnabled(ready and has_project and running)
         self._refresh_button.setEnabled(ready and has_project)
         self._log_button.setEnabled(ready and has_project)

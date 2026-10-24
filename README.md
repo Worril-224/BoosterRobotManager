@@ -24,6 +24,7 @@
 | R9 | rerun 联调 | 打包前检查 `src/brain/config/config.yaml`：`rerunLog.enable_tcp: true` 时自动把 `server_ip` 改成本机局域网 **IP:9876**（原值已有端口则沿用；只改 zip 内副本）；启动 start.sh 前自动打开 `rerun-0.20.3` / Windows `rerun-cli-*.exe`，并等待其监听 9876 后再运行 start.sh |
 | R10 | 足球地图监视 | 打开时自动检测并连接所有可连接的机器人，解析各自 brain.log 的 `FIELD_POSE`、`[BALL]` 与 `TeamID`；按 kid_size（9×6 m）比例绘制；不同队伍坐标系相差 180°，统一转换到**最后连接机器人**的队伍坐标系；机器人及它看到的球同色 |
 | R11 | 上传前身份替换 | 上传入口旁可开关；开启后选择 **Team ID / 球员编号**，上传前替换 zip 内所有 `config.yaml` 的 `team_id`、`player_id`（只改上传包，不改本地源文件） |
+| R12 | 直接启动 | 选择本地文件夹后检测工程格式（`scripts/start.sh` + `src/`）；若机器人上已有同名已部署工程，可点「直接启动」跳过上传/编译，直接执行远端 start.sh |
 
 界面中所有耗时操作（连接、上传、编译、启停、文件读写）都在 `QThread` 中执行，不会阻塞界面。
 
@@ -121,6 +122,8 @@ Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 gi
 4. 在右侧 **部署** 面板点击 **「选择上传内容 ▾」**，主动选择 **zip 文件** 或 **文件夹**（文件夹会先在本地自动打包成 zip）；也可以把 zip / 文件夹直接拖入窗口。然后点击 **② 上传并部署**：
    校验 → 清理远端同名文件 → 上传 → 解压 → 定位项目目录 → 编译 → 授权 start.sh。
    上传完成后进度区会切换到 **编译进度**（百分比 / 包数 / 输出行数 / 耗时），编译结束后保留最终结果。
+> 如果机器人上**已经部署并编译过**同名工程：选择本地文件夹后，点击 **「直接启动」** 会检测本地工程格式和远端 start.sh，存在则跳过上传/编译直接启动；若远端不存在，会提示先上传部署。
+
 > 需要上传前统一修改队伍/球员编号时，勾选 **「上传前修改 Team ID / 球员编号」**（在「选择上传内容」下方），填好 Team ID 与球员编号；上传前会改写 zip 内 `config.yaml`，本地源文件不变。
 
 5. 编译成功后点击 **▶ 启动**；用 **刷新状态**、**查看启动日志**、**■ 停止** 管理服务。
@@ -153,6 +156,7 @@ BoosterRobotManager/
 │   │   ├── local_zip.py         # 选择文件夹时本地自动打包 zip
 │   │   ├── brain_log_parser.py  # 解析 brain.log 的 FIELD_POSE / [BALL]
 │   │   ├── identity_config.py   # 上传前改写 team_id / player_id
+│   │   ├── project_format.py    # 直接启动前的本地工程格式检测
 │   │   ├── field_geometry.py    # kid_size 场地尺寸
 │   │   ├── rerun_config.py      # 打包前改写 rerunLog server_ip
 │   │   ├── rerun_viewer.py      # 启动 start.sh 前打开 rerun 查看器
@@ -361,6 +365,13 @@ BoosterRobotManager/
     - 只生成一个新的临时 zip 上传，**本地源文件不动**；部署结束后临时 zip 自动清理；
     - 找不到这两个键时会中止上传并提示，关闭开关即可恢复原行为。
 
+12. **直接启动（R12）**：选择本地文件夹时检测工程格式：
+    - 必须存在 `scripts/start.sh`（兼容旧 `script/` 或根目录）和 `src/`；
+    - `install/` 或 `build/` 存在时标记「已编译」，否则标记「源码」；
+    - 点击「直接启动」后，BRM 用本地文件夹名拼出远端目录 `<workspace>/<文件夹名>`，检查其中是否存在 `start.sh`；
+    - 存在则直接执行远端 start.sh，**不重新上传、不重新编译**（远端代码保持上一次部署版本）；
+    - 不存在则提示先通过「上传并部署」部署一次。
+
 **Q14：怎么选择上传文件夹而不是 zip？**
 点击部署面板的「选择上传内容 ▾」，在菜单里选「选择文件夹（自动打包为 zip）…」即可；也可以直接把文件夹拖进窗口。选「选择 zip 文件…」则和以前一样直接选择 .zip。
 
@@ -375,6 +386,9 @@ BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`
 
 **Q18：选择文件夹后为什么还要等一会儿？**
 选择或拖入文件夹时，程序会先在本地用 Python 标准库把它压缩成 zip（进度条显示「正在压缩 xx%」），压缩完成后才上传。zip 内会保留顶层文件夹，并自动跳过 `.git`、`.venv`、`build`、`install`、`log`、`__pycache__`、`node_modules` 等目录；临时 zip 保存在 `brm/temp/`，程序退出时自动清理。
+
+**Q23：直接启动提示未找到已部署工程？**
+直接启动按「本地文件夹名 = 远端工程目录名」查找，例如本地 `T2_demo_kidsize` 对应 `/home/booster/Workspace/T2_demo_kidsize`。请确认机器人上已经部署过同名工程且存在 `scripts/start.sh`；若目录名不同，可先通过「选择 Workspace 里的已有项目…」选中它，或正常上传部署一次。
 
 **Q19：足球地图里没有机器人/球？**
 确认 `brain.log` 里存在 `FIELD_POSE` 与 `[BALL]` 行；刚启动、尚未定位时 `Calibrated: NO` 也会显示。若日志目录不对或 brain 节点未运行，窗口底部会一直显示「等待 FIELD_POSE」。
