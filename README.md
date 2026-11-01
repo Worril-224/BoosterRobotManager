@@ -25,6 +25,7 @@
 | R10 | 足球地图监视 | 打开时自动检测并连接所有可连接的机器人，解析各自 brain.log 的 `FIELD_POSE`、`[BALL]` 与 `TeamID`；按 kid_size（9×6 m）比例绘制；不同队伍坐标系相差 180°，统一转换到**最后连接机器人**的队伍坐标系；机器人及它看到的球同色 |
 | R11 | 上传前身份替换 | 上传入口旁可开关；开启后选择 **Team ID / 球员编号**，上传前替换 zip 内所有 `config.yaml` 的 `team_id`、`player_id`（只改上传包，不改本地源文件） |
 | R12 | 直接启动 | 启动区独立按钮；点击后自行选择本地工程文件夹并检测格式（`scripts/start.sh` + `src/`），若机器人上已有同名已部署工程则跳过上传/编译，直接执行远端 start.sh |
+| R13 | 裁判机 IP | 上传前可开关修改机器人接收的裁判机 IP；可选保持当前 IP、使用本机 IP 或自定义 IPv4；同时改写 brain `config.yaml` 的 `game_control_ip` 与 game_controller `launch.py` 的 `ip_white_list` |
 
 界面中所有耗时操作（连接、上传、编译、启停、文件读写）都在 `QThread` 中执行，不会阻塞界面。
 
@@ -124,6 +125,8 @@ Windows 免安装便携包通过 **GitHub Releases** 发布（不再提交到 gi
    上传完成后进度区会切换到 **编译进度**（百分比 / 包数 / 输出行数 / 耗时），编译结束后保留最终结果。
 > 如果机器人上**已经部署并编译过**同名工程：直接点击 **「直接启动」**，在弹窗中选择本地工程文件夹；BRM 会检测格式和远端 start.sh，存在则跳过上传/编译直接启动。该操作与上传/zip 选择完全独立。
 
+> 需要上传前修改机器人接收的裁判机 IP 时，勾选 **「上传前修改裁判机 IP」**：默认「保持当前 IP（不修改）」，也可选「使用本机 IP」或填自定义 IPv4；上传前会同时改 brain `config.yaml` 的 `game_control_ip` 和 game_controller `launch.py` 的 `ip_white_list`，本地源文件不变。
+
 > 需要上传前统一修改队伍/球员编号时，勾选 **「上传前修改 Team ID / 球员编号」**（在「选择上传内容」下方），填好 Team ID 与球员编号；上传前会改写 zip 内 `config.yaml`，本地源文件不变。
 
 5. 编译成功后点击 **▶ 启动**；用 **刷新状态**、**查看启动日志**、**■ 停止** 管理服务。
@@ -157,6 +160,7 @@ BoosterRobotManager/
 │   │   ├── brain_log_parser.py  # 解析 brain.log 的 FIELD_POSE / [BALL]
 │   │   ├── identity_config.py   # 上传前改写 team_id / player_id
 │   │   ├── project_format.py    # 直接启动前的本地工程格式检测
+│   │   ├── referee_ip.py        # 上传前改写裁判机 IP（brain/launch.py）
 │   │   ├── field_geometry.py    # kid_size 场地尺寸
 │   │   ├── rerun_config.py      # 打包前改写 rerunLog server_ip
 │   │   ├── rerun_viewer.py      # 启动 start.sh 前打开 rerun 查看器
@@ -373,6 +377,12 @@ BoosterRobotManager/
     - 存在则直接执行远端 start.sh，**不重新上传、不重新编译**（远端代码保持上一次部署版本）；
     - 不存在则提示先通过「上传并部署」部署一次。
 
+13. **裁判机 IP（R13）**：部署面板上传入口旁有开关，关闭时不改任何文件；开启后选择：
+    - **保持当前 IP（不修改）**（默认）；
+    - **使用本机 IP**：自动检测运行 BRM 的电脑到机器人所在网络的 IPv4；
+    - **自定义 IP**：手动填写合法 IPv4。
+    上传前扫描 zip 内所有 `config.yaml` / `config.yml` 的 `game_control_ip`（兼容 `game_controller_ip` / `referee_ip` / `gc_ip`），以及所有 `.py` 中 `ip_white_list`、`game_control_ip` 的 IP 字面量，改为目标 IP；保留注释/引号，只改上传的临时 zip。找不到对应字段时中止上传并提示（关闭开关即可恢复原行为）。
+
 **Q14：怎么选择上传文件夹而不是 zip？**
 点击部署面板的「选择上传内容 ▾」，在菜单里选「选择文件夹（自动打包为 zip）…」即可；也可以直接把文件夹拖进窗口。选「选择 zip 文件…」则和以前一样直接选择 .zip。
 
@@ -402,6 +412,9 @@ BRM 会在工程目录、BRM 目录、当前目录下查找 `rerun-0.20.3/rerun`
 
 **Q19：足球地图里没有机器人/球？**
 确认 `brain.log` 里存在 `FIELD_POSE` 与 `[BALL]` 行；刚启动、尚未定位时 `Calibrated: NO` 也会显示。若日志目录不对或 brain 节点未运行，窗口底部会一直显示「等待 FIELD_POSE」。
+
+**Q24：上传前改了裁判机 IP 但机器人收不到裁判数据？**
+确认压缩包内存在 `src/brain/config/config.yaml` 的 `game_control_ip` 或 `src/game_controller/launch/launch.py` 的 `ip_white_list`；BRM 会同时修改这两处（存在时）。另外检查机器人网络与目标 IP 是否可达、game_controller 的端口/白名单开关是否匹配。若工程使用其它字段名，告诉我再扩展。
 
 ---
 

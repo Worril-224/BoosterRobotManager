@@ -8,6 +8,7 @@ from typing import Optional
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -109,6 +110,36 @@ class DeployPanel(QWidget):
         identity_row.addStretch(1)
         layout.addLayout(identity_row)
         self._on_identity_toggled(False)
+
+        # 上传前修改裁判机（GameController）IP
+        self._referee_check = QCheckBox("上传前修改裁判机 IP")
+        self._referee_check.setToolTip(
+            "开启后，上传前会把 zip 内 config.yaml 的 game_control_ip、"
+            "game_controller launch.py 的 ip_white_list 改为指定 IP；只改上传包。"
+        )
+        self._referee_check.toggled.connect(self._on_referee_toggled)
+        layout.addWidget(self._referee_check)
+
+        referee_row = QHBoxLayout()
+        referee_row.setSpacing(6)
+        referee_label = QLabel("裁判机 IP")
+        referee_label.setObjectName("MutedLabel")
+        self._referee_mode = QComboBox()
+        self._referee_mode.addItems(
+            ["保持当前 IP（不修改）", "使用本机 IP", "自定义 IP"]
+        )
+        self._referee_mode.setToolTip(
+            "默认沿用工程里当前的裁判机 IP；也可以改为本机 IP 或自定义地址。"
+        )
+        self._referee_mode.currentIndexChanged.connect(self._on_referee_mode_changed)
+        self._referee_custom = QLineEdit()
+        self._referee_custom.setPlaceholderText("例如 192.168.1.102")
+        self._referee_custom.setEnabled(False)
+        referee_row.addWidget(referee_label)
+        referee_row.addWidget(self._referee_mode, 1)
+        referee_row.addWidget(self._referee_custom, 1)
+        layout.addLayout(referee_row)
+        self._on_referee_toggled(False)
 
         hint = QLabel(
             "点击「选择上传内容」后可主动选择上传 zip 或文件夹（文件夹会先自动打包）。"
@@ -253,6 +284,28 @@ class DeployPanel(QWidget):
         if not self._identity_check.isChecked():
             return None
         return (self._team_spin.value(), self._player_spin.value())
+
+    def _on_referee_toggled(self, enabled: bool) -> None:
+        self._referee_mode.setEnabled(enabled)
+        self._referee_custom.setEnabled(
+            enabled and self._referee_mode.currentIndex() == 2
+        )
+
+    def _on_referee_mode_changed(self, index: int) -> None:
+        self._referee_custom.setEnabled(
+            self._referee_check.isChecked() and index == 2
+        )
+
+    def referee_ip_settings(self) -> tuple[str, str]:
+        """返回 (模式, 自定义 IP)。模式：off/keep/local/custom。"""
+        if not self._referee_check.isChecked():
+            return ("off", "")
+        index = self._referee_mode.currentIndex()
+        if index == 0:
+            return ("keep", "")
+        if index == 1:
+            return ("local", "")
+        return ("custom", self._referee_custom.text().strip())
 
     # ------------------------------------------------------------------
     # 状态更新

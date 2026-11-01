@@ -20,6 +20,7 @@ from ..core.identity_config import rewrite_zip_identity
 from ..core.local_zip import create_zip_from_folder
 from ..core.logbook import DeployLog
 from ..core.proc_control import ProcControl
+from ..core.referee_ip import rewrite_zip_referee_ip
 from ..core.rerun_config import prepare_zip_overrides
 from ..core.robots import Robot
 from ..core.scripts import find_script
@@ -216,6 +217,7 @@ class DeployWorker(BaseWorker):
         log_dir: Optional[Path] = None,
         secrets: tuple = (),
         identity: Optional[tuple] = None,
+        referee_ip: Optional[str] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -227,6 +229,7 @@ class DeployWorker(BaseWorker):
         self.log_dir = log_dir
         self.secrets = secrets
         self.identity = identity
+        self.referee_ip = referee_ip
 
     def execute(self) -> DeployResult:
         deploy_log = DeployLog(
@@ -236,7 +239,7 @@ class DeployWorker(BaseWorker):
             secrets=self.secrets,
         )
         zip_path = self.zip_path
-        rewritten: Optional[Path] = None
+        temp_paths: List[Path] = []
         try:
             if self.identity:
                 team_id, player_id = int(self.identity[0]), int(self.identity[1])
@@ -254,8 +257,32 @@ class DeployWorker(BaseWorker):
                     )
                 if update.changed:
                     zip_path = update.path
-                    rewritten = update.path
+                    temp_paths.append(update.path)
                     self.log.emit(f"身份配置已写入：{zip_path.name}")
+
+            if self.referee_ip:
+                try:
+                    referee_update = rewrite_zip_referee_ip(
+                        zip_path, constants.TEMP_DIR, self.referee_ip
+                    )
+                except ValueError as exc:
+                    raise BrmError(
+                        "修改裁判机 IP 失败。",
+                        hint=str(exc),
+                    ) from exc
+                deploy_log.info(referee_update.message)
+                if not referee_update.found:
+                    raise BrmError(
+                        "未找到裁判机 IP 配置，已停止上传。",
+                        hint=(
+                            "请确认压缩包内有 src/brain/config/config.yaml 的 "
+                            "game_control_ip，或 src/game_controller/launch/launch.py "
+                            "的 ip_white_list；也可以关闭「上传前修改裁判机 IP」。"
+                        ),
+                    )
+                if referee_update.changed:
+                    zip_path = referee_update.path
+                    temp_paths.append(referee_update.path)
 
             deploy_log.info(f"开始部署：{zip_path.name} → {self.workspace_dir}")
             deployer = Deployer(
@@ -273,9 +300,9 @@ class DeployWorker(BaseWorker):
             return result
         finally:
             deploy_log.close()
-            if rewritten is not None:
+            for temp_path in temp_paths:
                 try:
-                    rewritten.unlink()
+                    temp_path.unlink()
                 except OSError:
                     pass
 

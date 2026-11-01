@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Optional, Set
@@ -37,7 +38,12 @@ from ..core.project_format import detect_local_project
 from ..core.rerun_viewer import RerunViewerLauncher
 from ..core.robots import Robot, RobotStore
 from ..core.session_manager import SessionManager
-from ..core.util import normalize_remote_dir, posix_join, strip_trailing_slash
+from ..core.util import (
+    get_local_ip,
+    normalize_remote_dir,
+    posix_join,
+    strip_trailing_slash,
+)
 from ..core.zipguard import inspect_zip
 from .brain_log_monitor import BrainLogMonitorDialog
 from .field_monitor import ROBOT_COLORS, FieldMonitorDialog, RobotEndpoint
@@ -998,6 +1004,32 @@ class MainWindow(QMainWindow):
         if robot is None:
             return
 
+        # 上传前裁判机 IP 选项（与 zip 内容改写一起由 DeployWorker 执行）
+        referee_mode, referee_custom = self.deploy_panel.referee_ip_settings()
+        referee_ip = None
+        if referee_mode == "local":
+            referee_ip = get_local_ip(robot.host)
+            if not referee_ip:
+                QMessageBox.warning(
+                    self,
+                    "无法获取本机 IP",
+                    "没有检测到可用的本机局域网 IP，请检查网络连接，"
+                    "或改用「自定义 IP」。",
+                )
+                return
+        elif referee_mode == "custom":
+            try:
+                referee_ip = str(ipaddress.IPv4Address(referee_custom))
+            except ValueError:
+                QMessageBox.warning(
+                    self,
+                    "裁判机 IP 格式不正确",
+                    f"请输入合法的 IPv4 地址，例如 192.168.1.102。\n当前输入：{referee_custom or '（空）'}",
+                )
+                return
+        if referee_ip:
+            self._append_log(f"上传前将裁判机 IP 修改为：{referee_ip}")
+
         self._busy = True
         self._apply_state()
         self.deploy_panel.set_progress(0, "准备部署…")
@@ -1012,6 +1044,7 @@ class MainWindow(QMainWindow):
             robot.workspace_dir,
             secrets=(password,),
             identity=self.deploy_panel.identity_settings(),
+            referee_ip=referee_ip,
         )
         self._deploy_worker = worker
         self._track(worker)
